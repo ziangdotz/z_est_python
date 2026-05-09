@@ -1,0 +1,9 @@
+.claude
+.vscode
+
+__pycache__
+
+bin
+dist
+frontend/node_modules
+frontend/dist
