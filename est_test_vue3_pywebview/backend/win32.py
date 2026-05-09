@@ -84,11 +84,6 @@ def get_system_dpi() -> int:
             return 96
 
 
-def get_system_scale_factor() -> float:
-    """Return the display scale factor (e.g. 1.5 for 150% scaling)."""
-    return get_system_dpi() / 96.0
-
-
 def get_physical_screen_size() -> tuple[int, int]:
     """Return the primary monitor's physical pixel resolution.
 
@@ -126,7 +121,6 @@ def get_dpi_for_window(hwnd: int) -> int:
             return dpi
         except Exception:
             return 96
-
 
 
 def _dpi_scale_icon_size(base_size: int, dpi: int, standards: tuple[int, ...]) -> int:
@@ -181,7 +175,8 @@ def set_native_background(hwnd: int, dark: bool) -> None:
     """Set the Win32 native window background color."""
     color = 0x001E1E1E if dark else 0x00F3F3F3
     brush = ctypes.windll.gdi32.CreateSolidBrush(color)
-    old = ctypes.windll.user32.SetClassLongPtrW(hwnd, GCLP_HBRBACKGROUND, brush)
+    old = ctypes.windll.user32.SetClassLongPtrW(
+        hwnd, GCLP_HBRBACKGROUND, brush)
     if old:
         ctypes.windll.gdi32.DeleteObject(old)
     ctypes.windll.user32.InvalidateRect(hwnd, None, True)
