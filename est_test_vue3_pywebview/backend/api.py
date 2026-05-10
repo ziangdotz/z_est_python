@@ -10,7 +10,9 @@ import json as _json
 import logging
 import os
 import time
+import tkinter as _tk
 import urllib.request
+from tkinter import filedialog as _filedialog
 
 from .win32 import (
     find_hwnd_by_title,
@@ -30,30 +32,7 @@ class Api:
         self._window_title: str | None = None
         self._saved_theme: str | None = None
 
-    def set_window(self, window: object, title: str) -> None:
-        self._window = window
-        self._window_title = title
-
-    # ──────────── HTTP proxy (frontend calls via pywebview) ────────────
-
-    def post_json(self, url: str, payload: dict) -> dict:
-        """Forward a JSON POST request from the frontend to the target URL."""
-        data = _json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req) as resp:
-            return _json.loads(resp.read().decode("utf-8"))
-
-    # ──────────── Settings (frontend reads on mount) ────────────────────
-
-    def get_settings(self) -> dict:
-        return {"theme": self.get_saved_theme()}
-
-    # ──────────── Theme persistence ───────────────────────────────────
+    # ──────────── Static helpers ──────────────────────────────────────
 
     @staticmethod
     def get_system_dark() -> bool:
@@ -70,11 +49,6 @@ class Api:
         except Exception:
             return False
 
-    def get_saved_theme(self) -> str:
-        if self._saved_theme in ("light", "dark"):
-            return self._saved_theme
-        return "dark" if self.get_system_dark() else "light"
-
     @staticmethod
     def is_dark_mode(theme: str) -> bool:
         if theme == "dark":
@@ -82,6 +56,59 @@ class Api:
         if theme == "light":
             return False
         return Api.get_system_dark()
+
+    # ──────────── Public: window & settings ───────────────────────────
+
+    def set_window(self, window: object, title: str) -> None:
+        self._window = window
+        self._window_title = title
+
+    def get_settings(self) -> dict:
+        return {"theme": self.get_saved_theme()}
+
+    # ──────────── Theme persistence ───────────────────────────────────
+
+    def get_saved_theme(self) -> str:
+        if self._saved_theme in ("light", "dark"):
+            return self._saved_theme
+        return "dark" if self.get_system_dark() else "light"
+
+    def set_theme(self, theme: str) -> None:
+        """Persist theme preference and apply to the native window."""
+        if theme in ("light", "dark"):
+            self._saved_theme = theme
+        hwnd = self._get_hwnd()
+        if hwnd is None:
+            return
+        dark = self.is_dark_mode(theme)
+        set_native_background(hwnd, dark)
+        set_window_dark_titlebar(hwnd, dark)
+
+    def sync_titlebar_immediate(self, theme: str) -> None:
+        """Poll for HWND readiness, then set native background + title bar color."""
+        dark = self.is_dark_mode(theme)
+        for _ in range(20):
+            hwnd = self._get_hwnd()
+            if hwnd:
+                set_native_background(hwnd, dark)
+                set_window_dark_titlebar(hwnd, dark)
+                return
+            time.sleep(0.05)
+        logger.warning("HWND not found after 20 retries, skipping titlebar sync")
+
+    # ──────────── HTTP proxy (frontend calls via pywebview) ────────────
+
+    def post_json(self, url: str, payload: dict) -> dict:
+        """Forward a JSON POST request from the frontend to the target URL."""
+        data = _json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
 
     # ──────────── Result export to file ───────────────────────────────
 
@@ -97,6 +124,24 @@ class Api:
             logger.exception("Failed to export results to %s", filepath)
             raise
         return filepath
+
+    # ──────────── Native file picker ──────────────────────────────────
+
+    def pick_file(self) -> str | None:
+        """Open a native Windows file-open dialog and return the selected path."""
+        root = _tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            return _filedialog.askopenfilename(
+                title="选择文件",
+                filetypes=[
+                    ("所有支持的格式", "*.bin *.dat *.txt *.raw"),
+                    ("所有文件", "*.*"),
+                ],
+            ) or None
+        finally:
+            root.destroy()
 
     # ──────────── Window handle resolution ────────────────────────────
 
@@ -115,26 +160,3 @@ class Api:
                     if handle:
                         return handle
         return None
-
-    def sync_titlebar_immediate(self, theme: str) -> None:
-        """Poll for HWND readiness, then set native background + title bar color."""
-        dark = self.is_dark_mode(theme)
-        for _ in range(20):
-            hwnd = self._get_hwnd()
-            if hwnd:
-                set_native_background(hwnd, dark)
-                set_window_dark_titlebar(hwnd, dark)
-                return
-            time.sleep(0.05)
-        logger.warning("HWND not found after 20 retries, skipping titlebar sync")
-
-    def set_theme(self, theme: str) -> None:
-        """Persist theme preference and apply to the native window."""
-        if theme in ("light", "dark"):
-            self._saved_theme = theme
-        hwnd = self._get_hwnd()
-        if hwnd is None:
-            return
-        dark = self.is_dark_mode(theme)
-        set_native_background(hwnd, dark)
-        set_window_dark_titlebar(hwnd, dark)

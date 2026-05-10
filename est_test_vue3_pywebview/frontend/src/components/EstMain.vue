@@ -1,22 +1,24 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useSettings } from '../composables/useSettings.js'
 
 const { t } = useSettings()
 
 /* ── State ── */
+const testInputParams = reactive({
+	inputDataPath: 'xxx\\data_0',
+})
+
 const testMode = ref('restart')
 const bitsPerSymbol = ref(8)
 const hiValue = ref('')
 const useBitsValue = ref('')
 const verbose = ref(false)
-const selectedFile = ref(null)
 const isRunning = ref(false)
 const stopRequestedByUser = ref(false)
 let abortController = null
 
 const apiOrigin = ref('http://127.0.0.1:8888')
-const fileInput = ref(null)
 
 const runtimeLogText = ref('')
 const resultData = ref(null)
@@ -30,7 +32,7 @@ const progressTrackRef = ref(null)
 const isRestart = computed(() => testMode.value === 'restart')
 const isNonIID = computed(() => testMode.value === 'noniid')
 
-const hasFile = computed(() => !!selectedFile.value)
+const hasInputDataPath = computed(() => testInputParams.inputDataPath.trim().length > 0)
 const hasRuntimeLogText = computed(() => runtimeLogText.value.trim().length > 0)
 const hasTableResult = computed(() => resultRows.value.some(row => {
 	const name = String(row?.name ?? '').trim()
@@ -46,12 +48,6 @@ const testResult = computed(() => {
 	if (d.IID_Test) return { mode: 'iid', raw: d.IID_Test }
 	if (d.Non_IID_Test) return { mode: 'noniid', raw: d.Non_IID_Test }
 	return null
-})
-
-const fileMeta = computed(() => {
-	if (!selectedFile.value) return null
-	const f = selectedFile.value
-	return { name: f.name, size: f.size }
 })
 
 const progressDisplay = computed(() => '0 %')
@@ -81,22 +77,21 @@ const estimatorNames = {
 }
 
 /* ── File handling ── */
-function pickFile() { fileInput.value?.click() }
-
-function onFileChange(e) {
-	const files = e.target.files
-	if (files?.length === 1) selectedFile.value = files[0]
-}
-
-function onDrop(e) {
-	e.preventDefault()
-	const files = e.dataTransfer?.files
-	if (files?.length === 1) selectedFile.value = files[0]
+async function handlePickFile() {
+	try {
+		const picked = await window.pywebview.api.pick_file()
+		if (picked) {
+			testInputParams.inputDataPath = picked
+			appendRuntimeLog(`[INFO] 已选择文件: ${picked}`)
+		}
+	} catch (error) {
+		appendRuntimeLog(`[WARN] 选择文件取消或失败: ${error?.message ?? error}`)
+	}
 }
 
 /* ── Validation ── */
 function validate() {
-	if (!selectedFile.value) return t('est.err.noFile')
+	if (!testInputParams.inputDataPath.trim()) return t('est.err.noFile')
 	if (!testMode.value) return t('est.err.noMode')
 	if (isRestart.value) {
 		const hi = parseFloat(hiValue.value)
@@ -122,6 +117,7 @@ const appendRuntimeLog = (message) => {
 	runtimeLogText.value = `${runtimeLogText.value}\n${line}`
 }
 
+const clearInputDataPath = () => { testInputParams.inputDataPath = '' }
 const clearRuntimeLogText = () => { runtimeLogText.value = '' }
 
 const formatNum = (val) => {
@@ -197,7 +193,6 @@ function updateResultRows() {
 
 /* ── Mode switch ── */
 function onModeChange() {
-	selectedFile.value = null
 	hiValue.value = ''
 	useBitsValue.value = ''
 	resultData.value = null
@@ -206,22 +201,6 @@ function onModeChange() {
 }
 
 /* ── Test execution ── */
-function readFileAsBase64(file) {
-	return new Promise((resolve, reject) => {
-		const reader = new FileReader()
-		reader.onload = () => {
-			const dataUrl = String(reader.result || '')
-			const parts = dataUrl.split(',')
-			if (parts.length < 2) { reject(new Error('File encoding failed')); return }
-			resolve(parts[1])
-		}
-		reader.onerror = () => reject(new Error('File read failed'))
-		reader.readAsDataURL(file)
-	})
-}
-
-function hasPwApi() { return !!(window.pywebview?.api) }
-
 async function handleStartTest() {
 	if (isRunning.value) {
 		try {
@@ -252,9 +231,8 @@ async function handleStartTest() {
 	appendRuntimeLog(`[INFO] 模式: ${formatMode(testMode.value)}, bits_per_symbol: ${bitsPerSymbol.value}`)
 
 	try {
-		const base64 = await readFileAsBase64(selectedFile.value)
 		const payload = {
-			datafile: base64,
+			datafile: testInputParams.inputDataPath.trim(),
 			bits_per_symbol: parseInt(bitsPerSymbol.value, 10) || 8,
 			mode: testMode.value,
 			verbose: verbose.value
@@ -264,18 +242,13 @@ async function handleStartTest() {
 
 		const apiUrl = apiOrigin.value.replace(/\/$/, '') + '/api/v1/entropy/est'
 
-		let body
-		if (hasPwApi()) {
-			body = await window.pywebview.api.post_json(apiUrl, payload)
-		} else {
-			const resp = await fetch(apiUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify(payload),
-				signal: controller.signal
-			})
-			body = await resp.json()
-		}
+		const resp = await fetch(apiUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(payload),
+			signal: controller.signal
+		})
+		const body = await resp.json()
 
 		resultJson.value = JSON.stringify(body, null, 2)
 		if (body.data) resultData.value = body.data
@@ -317,7 +290,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<section class="est-main" @dragover.prevent @drop="onDrop">
+	<section class="est-main">
 		<!-- Left: 结果汇总 -->
 		<div class="summary_panel">
 			<header class="summary_title">
@@ -413,13 +386,12 @@ onBeforeUnmount(() => {
 
 			<!-- File selection -->
 			<div class="path_row">
-				<button class="pick_btn" type="button" @click="pickFile">选择文件</button>
+				<button class="pick_btn" type="button" @click="handlePickFile">选择文件</button>
 				<div class="selected_path_input_wrap">
-					<input :value="fileMeta ? fileMeta.name : ''" type="text" readonly placeholder="拖放文件或点击选择" />
-					<span v-if="hasFile" class="clear_hint" @click="selectedFile = null">清除</span>
+					<input v-model="testInputParams.inputDataPath" type="text" />
+					<span v-if="hasInputDataPath" class="clear_hint" @click="clearInputDataPath">清除</span>
 				</div>
 			</div>
-			<input ref="fileInput" type="file" accept=".bin,.dat,.txt,.raw" class="hidden_file_input" @change="onFileChange" />
 
 			<!-- Progress + Start button -->
 			<div class="action_progress_row">
@@ -465,7 +437,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ── 1) Page root ── */
+/* ── Page root ── */
 .est-main {
 	--wails-draggable: no-drag;
 	display: grid;
@@ -483,7 +455,7 @@ onBeforeUnmount(() => {
 	font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-/* ── 2) Shared panel ── */
+/* ── Shared panel ── */
 .summary_panel,
 .control_panel {
 	min-width: 0;
@@ -496,7 +468,7 @@ onBeforeUnmount(() => {
 	box-shadow: none;
 }
 
-/* ── 3) Left summary panel ── */
+/* ── Left summary panel ── */
 .summary_panel {
 	display: flex;
 	flex-direction: column;
@@ -628,7 +600,7 @@ onBeforeUnmount(() => {
 .result_table th:nth-child(5),
 .result_table td:nth-child(5) { text-align: center; }
 
-/* ── 3a) Detail table (Non-IID) ── */
+/* ── Detail table (Non-IID) ── */
 .detail_section { margin-top: 10px; flex-shrink: 0; }
 
 .detail_section h3 {
@@ -675,7 +647,7 @@ onBeforeUnmount(() => {
 
 .detail_table .row-min { background: var(--rt-table-head-bg); font-weight: 700; }
 
-/* ── 4) Right control panel ── */
+/* ── Right control panel ── */
 .control_panel {
 	--action-btn-width: 110px;
 	--pair-label-width: 12.5ch;
@@ -697,7 +669,7 @@ onBeforeUnmount(() => {
 .control_panel::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--rt-scroll-thumb); }
 .control_panel::-webkit-scrollbar-thumb:hover { background: var(--rt-scroll-thumb-hover); }
 
-/* ── 4.1 Shared form primitives ── */
+/* ── Shared form primitives ── */
 .threshold_row,
 .selectors_row,
 .path_row,
@@ -715,7 +687,7 @@ onBeforeUnmount(() => {
 	flex-wrap: wrap;
 }
 
-/* ── 4.1a Threshold row (bps / h_i / use_bits) ── */
+/* ── Threshold row (bps / h_i / use_bits) ── */
 .threshold_row {
 	justify-content: flex-start;
 	flex-wrap: nowrap;
@@ -800,7 +772,7 @@ onBeforeUnmount(() => {
 	box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
-/* ── 4.2 Floating tooltip ── */
+/* ── Floating tooltip ── */
 .field_pair label {
 	position: relative;
 }
@@ -901,7 +873,7 @@ onBeforeUnmount(() => {
 	line-height: 1;
 }
 
-/* ── 4.3 Selectors row (mode + verbose) ── */
+/* ── Selectors row (mode + verbose) ── */
 .selectors_row {
 	justify-content: flex-start;
 	flex-wrap: nowrap;
@@ -949,8 +921,13 @@ select option:hover {
 	color: var(--select-option-selected-text);
 }
 
-/* ── 4.4 Path row ── */
+/* ── Path row ── */
 .path_row { justify-content: flex-start; }
+
+.path_row input {
+	flex: 1;
+	min-width: 0;
+}
 
 .selected_path_input_wrap {
 	position: relative;
@@ -978,16 +955,7 @@ select option:hover {
 .selected_path_input_wrap:hover .clear_hint,
 .selected_path_input_wrap:focus-within .clear_hint { opacity: 0.82; }
 
-.hidden_file_input {
-	position: absolute;
-	width: 0;
-	height: 0;
-	opacity: 0;
-	pointer-events: none;
-	overflow: hidden;
-}
-
-/* ── 4.5 Action progress row ── */
+/* ── Action progress row ── */
 .action_progress_row {
 	display: flex;
 	align-items: center;
@@ -1095,7 +1063,7 @@ select option:hover {
 	text-shadow: var(--rt-progress-text-shadow);
 }
 
-/* ── 4.7 Terminal output row ── */
+/* ── Terminal output row ── */
 .terminal_output_row {
 	display: block;
 	flex: 1 1 auto;
@@ -1162,7 +1130,7 @@ select option:hover {
 .terminal_output_wrap:hover .clear_output_hint,
 .terminal_output_wrap:focus-within .clear_output_hint { opacity: 0.82; }
 
-/* ── 4.8 JSON output ── */
+/* ── JSON output ── */
 .json_output_row { flex-shrink: 0; }
 
 .json_toggle_btn {
@@ -1201,7 +1169,7 @@ select option:hover {
 	word-break: break-all;
 }
 
-/* ── 5) Animations ── */
+/* ── Animations ── */
 @keyframes progressGradientShift {
 	0% { background-position: 0% 50%; }
 	100% { background-position: 100% 50%; }
@@ -1212,12 +1180,16 @@ select option:hover {
 	100% { transform: translateX(130%); }
 }
 
-/* ── 6) Responsive ── */
+/* ── Responsive ── */
 @media (max-width: 820px) {
 	.est-main {
 		grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
 		min-width: 0;
 		padding: 8px;
+	}
+
+	.path_row input {
+		min-width: 130px;
 	}
 
 	.result_table { min-width: 460px; }

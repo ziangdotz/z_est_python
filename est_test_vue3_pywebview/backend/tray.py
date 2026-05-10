@@ -67,6 +67,14 @@ class TrayManager:
         self._icon = self._build_icon()
         self._icon.run()
 
+    def stop(self) -> None:
+        """Stop the tray icon if running."""
+        if self._icon:
+            try:
+                self._icon.stop()
+            except Exception:
+                logger.exception("Failed to stop tray icon")
+
     # ── Internal helpers ──────────────────────────────────────────────
 
     def _t(self, key: str) -> str:
@@ -172,11 +180,3 @@ class TrayManager:
                 self._main_window.destroy()
             except Exception:
                 logger.exception("Failed to destroy window")
-
-    def stop(self) -> None:
-        """Stop the tray icon if running."""
-        if self._icon:
-            try:
-                self._icon.stop()
-            except Exception:
-                logger.exception("Failed to stop tray icon")

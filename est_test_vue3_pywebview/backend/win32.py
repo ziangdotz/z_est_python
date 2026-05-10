@@ -45,7 +45,7 @@ user32 = ctypes.windll.user32  # type: ignore[attr-defined]
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Window icon management (from main.py)
+# HWND lookup utilities
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -64,6 +64,37 @@ def find_window_by_title(title: str) -> int | None:
 
     user32.EnumWindows(enum_callback, 0)
     return result[0] if result else None
+
+
+def find_hwnd_by_title(title: str) -> int | None:
+    """Find a window HWND by exact title match."""
+    hwnd = ctypes.windll.user32.FindWindowW(None, title)
+    return hwnd if hwnd else None
+
+
+def find_main_hwnd() -> int | None:
+    """Find the current process's main window HWND by PID."""
+    current_pid = os.getpid()
+    result = [None]
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def enum_callback(hwnd, lparam):
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == current_pid and ctypes.windll.user32.IsWindowVisible(hwnd):
+            style = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_STYLE)
+            if style & _WS_CAPTION:
+                result[0] = hwnd
+                return False
+        return True
+
+    ctypes.windll.user32.EnumWindows(enum_callback, 0)
+    return result[0]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# DPI utilities
+# ══════════════════════════════════════════════════════════════════════
 
 
 def get_system_dpi() -> int:
@@ -132,6 +163,11 @@ def _dpi_scale_icon_size(base_size: int, dpi: int, standards: tuple[int, ...]) -
     return size
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Window icon management
+# ══════════════════════════════════════════════════════════════════════
+
+
 def set_titlebar_icon(hwnd: int, icon_path: str) -> None:
     """Set the title-bar small icon (DPI-adaptive)."""
     dpi = get_dpi_for_window(hwnd)
@@ -157,7 +193,7 @@ def set_taskbar_icon(hwnd: int, icon_path: str) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Dark-mode title bar & native background (from api.py)
+# Dark-mode title bar & native background
 # ══════════════════════════════════════════════════════════════════════
 
 
@@ -181,34 +217,3 @@ def set_native_background(hwnd: int, dark: bool) -> None:
         ctypes.windll.gdi32.DeleteObject(old)
     ctypes.windll.user32.InvalidateRect(hwnd, None, True)
     ctypes.windll.user32.UpdateWindow(hwnd)
-
-
-# ══════════════════════════════════════════════════════════════════════
-# HWND lookup utilities (from api.py)
-# ══════════════════════════════════════════════════════════════════════
-
-
-def find_hwnd_by_title(title: str) -> int | None:
-    """Find a window HWND by exact title match."""
-    hwnd = ctypes.windll.user32.FindWindowW(None, title)
-    return hwnd if hwnd else None
-
-
-def find_main_hwnd() -> int | None:
-    """Find the current process's main window HWND by PID."""
-    current_pid = os.getpid()
-    result = [None]
-
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-    def enum_callback(hwnd, lparam):
-        pid = ctypes.c_ulong()
-        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        if pid.value == current_pid and ctypes.windll.user32.IsWindowVisible(hwnd):
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_STYLE)
-            if style & _WS_CAPTION:
-                result[0] = hwnd
-                return False
-        return True
-
-    ctypes.windll.user32.EnumWindows(enum_callback, 0)
-    return result[0]

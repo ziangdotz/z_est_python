@@ -5,7 +5,11 @@ import EstMain from './components/EstMain.vue'
 import About from './components/About.vue'
 import { loadAllSettings } from './composables/useSettings.js'
 
+// ── State ────────────────────────────────────────────────────────
+
 const isAboutPanelOpen = ref(false)
+
+// ── Callbacks ────────────────────────────────────────────────────
 
 /* Called from Python backend via evaluate_js when user clicks "About" in system tray */
 window.showAboutPanel = () => {
@@ -15,6 +19,8 @@ window.showAboutPanel = () => {
 function closeAboutPanel() {
 	isAboutPanelOpen.value = false
 }
+
+// ── Lifecycle ────────────────────────────────────────────────────
 
 onMounted(() => { loadAllSettings() })
 </script>
@@ -34,10 +40,10 @@ onMounted(() => { loadAllSettings() })
 
 <style scoped>
 * {
-	user-select: none;
 	-ms-user-select: none;
 	-moz-user-select: none;
 	-webkit-user-select: none;
+	user-select: none;
 }
 
 /* ---- App Shell ---- */
@@ -48,38 +54,38 @@ onMounted(() => { loadAllSettings() })
 	height: 100%;
 	padding: 0;
 	box-sizing: border-box;
-	background-color: var(--window-bg);
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+	background-color: var(--window-bg);
 }
 
 .app_viewer {
 	width: 100%;
-	background-color: transparent;
 	flex: 1;
 	display: flex;
 	align-items: stretch;
 	min-height: 0;
 	overflow: hidden;
 	overscroll-behavior: none;
+	background-color: transparent;
 }
 
 /* ---- About Panel Slide ---- */
 
 .about_panel_slide-enter-active {
+	will-change: opacity, transform;
 	transition:
 		opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
 		transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
-	will-change: opacity, transform;
 	transform-origin: top right;
 }
 
 .about_panel_slide-leave-active {
+	will-change: opacity, transform;
 	transition:
 		opacity 180ms cubic-bezier(0.32, 0, 0.67, 0),
 		transform 200ms cubic-bezier(0.32, 0, 0.67, 0);
-	will-change: opacity, transform;
 	transform-origin: top right;
 }
 

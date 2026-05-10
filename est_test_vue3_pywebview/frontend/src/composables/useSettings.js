@@ -1,6 +1,10 @@
 import { ref } from 'vue'
 
+// ── State ──────────────────────────────────────────────────────────
+
 const theme = ref('dark')
+
+// ── Helpers ────────────────────────────────────────────────────────
 
 const hasApi = () => {
 	return !!(window.pywebview && window.pywebview.api)
@@ -12,9 +16,6 @@ function applyTheme() {
 		: theme.value
 	document.documentElement.setAttribute('data-theme', t)
 }
-
-/* Apply default theme immediately so CSS matches on first paint */
-applyTheme()
 
 async function loadAllSettings() {
 	if (!hasApi()) return
@@ -28,6 +29,8 @@ async function loadAllSettings() {
 		console.warn('Failed to load settings:', e)
 	}
 }
+
+// ── Translations ───────────────────────────────────────────────────
 
 const translations = {
 	zh: {
@@ -90,14 +93,21 @@ function t(key) {
 	return translations.zh[key] || key
 }
 
-export function useSettings() {
-	return { t }
-}
+// ── Side effects ───────────────────────────────────────────────────
+
+/* Apply default theme immediately so CSS matches on first paint */
+applyTheme()
 
 /* Called from Python backend via evaluate_js when user toggles theme in system tray */
 window.setThemeFromTray = (newTheme) => {
 	theme.value = newTheme
 	applyTheme()
+}
+
+// ── Exports ────────────────────────────────────────────────────────
+
+export function useSettings() {
+	return { t }
 }
 
 export { theme, applyTheme, loadAllSettings }

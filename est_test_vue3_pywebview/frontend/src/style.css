@@ -77,12 +77,13 @@
 	--rt-output-text: #d8d8d8;
 
 	--rt-scroll-track: rgba(30, 30, 30, 0.65);
-	--rt-scroll-track-transparent: transparent;
 	--rt-scroll-thumb: rgba(138, 138, 138, 0.62);
 	--rt-scroll-thumb-hover: rgba(170, 170, 170, 0.72);
 	--rt-table-scroll-track: #1d1d1d;
 	--rt-table-scroll-thumb: #636363;
 	--rt-table-scroll-thumb-hover: #7d7d7d;
+
+	--rt-scroll-track-transparent: transparent;
 	--rt-open-file-hint-text: rgba(214, 214, 214, 0.78);
 }
 

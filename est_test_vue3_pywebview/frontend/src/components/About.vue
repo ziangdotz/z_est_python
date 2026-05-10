@@ -45,11 +45,13 @@ const closePanel = () => {
 	right: clamp(8px, 1vw, 14px);
 	bottom: clamp(8px, 1vw, 14px);
 	z-index: 1002;
-	display: flex;
-	flex-direction: column;
 	width: calc(100vw * 0.4);
 	height: calc(100vh * 0.5);
 	overflow: hidden;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
 	border: 1px solid var(--panel-border);
 	border-radius: 14px;
 	background: linear-gradient(155deg, var(--panel-bg-start) 0%, var(--panel-bg-end) 100%);

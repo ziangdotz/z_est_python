@@ -42,8 +42,6 @@ from backend.win32 import (
 
 logger = logging.getLogger(__name__)
 
-# ── Windows DPI awareness ─────────────────────────────────────────────
-
 if sys.platform == "win32":
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
