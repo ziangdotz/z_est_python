@@ -1,10 +1,11 @@
 <script setup>
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useSettings } from '../composables/useSettings.js'
 
 const { t } = useSettings()
 
-/* ── State ── */
+// -- State ----------------------------------------------------------------
+
 const testInputParams = reactive({
 	inputDataPath: 'xxx\\data_0',
 })
@@ -15,31 +16,24 @@ const hiValue = ref('')
 const useBitsValue = ref('')
 const verbose = ref(false)
 const isRunning = ref(false)
-const stopRequestedByUser = ref(false)
-let abortController = null
 
-const apiOrigin = ref('http://127.0.0.1:8888')
+let pollTimerId = null
 
 const runtimeLogText = ref('')
 const resultData = ref(null)
-const resultRows = ref([])
 const activeResultTab = ref('summary')
 const resultJson = ref('')
 
 const progressTrackRef = ref(null)
 
-/* ── Computed ── */
+// -- Computed --------------------------------------------------------------
+
 const isRestart = computed(() => testMode.value === 'restart')
 const isNonIID = computed(() => testMode.value === 'noniid')
 
 const hasInputDataPath = computed(() => testInputParams.inputDataPath.trim().length > 0)
 const hasRuntimeLogText = computed(() => runtimeLogText.value.trim().length > 0)
-const hasTableResult = computed(() => resultRows.value.some(row => {
-	const name = String(row?.name ?? '').trim()
-	const value = String(row?.value ?? '').trim()
-	const result = String(row?.result ?? '').trim()
-	return name.length > 0 || value.length > 0 || result.length > 0
-}))
+const hasTableResult = computed(() => detailTableRows.value.length > 0)
 
 const testResult = computed(() => {
 	const d = resultData.value
@@ -50,75 +44,66 @@ const testResult = computed(() => {
 	return null
 })
 
+const estimatorNames = {
+	MCV: 'Most Common Value',
+	Collision: 'Collision',
+	Markov: 'Markov',
+	Compression: 'Compression',
+	't-Tuple': 't-Tuple',
+	LRS: 'Longest Repeated Substring',
+	MultiMCW: 'Multi Most Common in Window',
+	Lag: 'Lag Prediction',
+	MultiMMC: 'MultiMMC Prediction',
+	LZ78Y: 'LZ78Y Prediction',
+}
+
+const detailTableRows = computed(() => {
+	const tr = testResult.value
+	if (!tr) return []
+
+	if (tr.mode === 'restart') {
+		return [
+			{ key: 'H_I', name: 'H_I', english: 'H_min (Restart Entropy)', value: tr.raw.H_I },
+			{ key: 'F', name: 'F', english: 'F (Fluctuation)', value: tr.raw.F },
+			{ key: 'U', name: 'U', english: 'U (Uniformity)', value: tr.raw.U },
+		]
+	}
+
+	if (tr.mode === 'iid') {
+		return [
+			{ key: 'IID', name: 'IID', english: 'IID Test Result', value: tr.raw.IID },
+			{ key: 'min_entropy', name: 'H_min', english: 'min_entropy', value: tr.raw.min_entropy },
+		]
+	}
+
+	if (tr.raw.details) {
+		return Object.entries(tr.raw.details).map(([key, val]) => ({
+			key,
+			name: key,
+			english: estimatorNames[key] || key,
+			value: val,
+		}))
+	}
+
+	return [{ key: 'min_entropy', name: 'H_min', english: 'min_entropy', value: tr.raw.min_entropy }]
+})
+
+const detailTableHeading = computed(() => {
+	const mode = testResult.value?.mode
+	if (mode === 'restart') return 'Restart 结果详情'
+	if (mode === 'iid') return 'IID 结果详情'
+	return 'Non-IID 估计器详情'
+})
+
+const detailTableValueHeader = computed(() => {
+	const mode = testResult.value?.mode
+	return mode === 'noniid' ? 'min_entropy' : '值'
+})
+
 const progressDisplay = computed(() => '0 %')
 const startBtnText = computed(() => (isRunning.value ? '停止测试' : '开始测试'))
 
-const tableHeaders = ['序号', '测试模式', '测试项', '值', '结果']
-const tableRows = computed(() => {
-	const rows = resultRows.value.map((row, idx) => ({
-		id: Number(row?.index ?? idx + 1),
-		mode: String(row?.mode ?? ''),
-		name: String(row?.name ?? ''),
-		value: String(row?.value ?? ''),
-		result: String(row?.result ?? '')
-	}))
-	if (rows.length >= 10) return rows
-	const pad = Array.from({ length: 10 - rows.length }, (_, i) => ({
-		id: rows.length + i + 1, mode: '', name: '', value: '', result: ''
-	}))
-	return [...rows, ...pad]
-})
-
-const estimatorNames = {
-	MCV: 'Most Common Value', Collision: 'Collision', Markov: 'Markov',
-	Compression: 'Compression', 't-Tuple': 't-Tuple', LRS: 'Longest Repeated Substring',
-	MultiMCW: 'Multi Most Common in Window', Lag: 'Lag Prediction',
-	MultiMMC: 'MultiMMC Prediction', LZ78Y: 'LZ78Y Prediction'
-}
-
-/* ── File handling ── */
-async function handlePickFile() {
-	try {
-		const picked = await window.pywebview.api.pick_file()
-		if (picked) {
-			testInputParams.inputDataPath = picked
-			appendRuntimeLog(`[INFO] 已选择文件: ${picked}`)
-		}
-	} catch (error) {
-		appendRuntimeLog(`[WARN] 选择文件取消或失败: ${error?.message ?? error}`)
-	}
-}
-
-/* ── Validation ── */
-function validate() {
-	if (!testInputParams.inputDataPath.trim()) return t('est.err.noFile')
-	if (!testMode.value) return t('est.err.noMode')
-	if (isRestart.value) {
-		const hi = parseFloat(hiValue.value)
-		if (isNaN(hi) || hi < 0) return t('est.err.hiRequired')
-	}
-	const bps = parseInt(bitsPerSymbol.value, 10)
-	if (isNaN(bps) || bps < 1 || bps > 8) return t('est.err.bpsRange')
-	if (isNonIID.value && useBitsValue.value) {
-		const ub = parseInt(useBitsValue.value, 10)
-		if (isNaN(ub) || ub < 1) return t('est.err.ubRange')
-	}
-	return null
-}
-
-/* ── Helpers ── */
-const appendRuntimeLog = (message) => {
-	const line = String(message ?? '').trimEnd()
-	if (!line) return
-	if (runtimeLogText.value.length === 0) {
-		runtimeLogText.value = line
-		return
-	}
-	runtimeLogText.value = `${runtimeLogText.value}\n${line}`
-}
-
-const clearInputDataPath = () => { testInputParams.inputDataPath = '' }
-const clearRuntimeLogText = () => { runtimeLogText.value = '' }
+// -- Helpers ---------------------------------------------------------------
 
 const formatNum = (val) => {
 	if (val === null || val === undefined) return '-'
@@ -140,152 +125,187 @@ const formatDurationMs = (elapsedMs) => {
 	return `${minutes} min ${seconds.toFixed(3)} s`
 }
 
-/* ── Result processing ── */
-function normalizeResult(mode, raw) {
-	if (!raw) return { status: 'error', message: 'Empty result' }
-	if (mode === 'restart') return {
-		status: raw.passed ? 'ok' : 'error', h_min: raw.H_I,
-		F: raw.F, U: raw.U,
-		message: raw.passed ? 'Restart 测试通过' : 'Restart 测试未通过'
+const appendRuntimeLog = (message) => {
+	const line = String(message ?? '').trimEnd()
+	if (!line) return
+	if (runtimeLogText.value.length === 0) {
+		runtimeLogText.value = line
+		return
 	}
-	if (mode === 'iid') return {
-		status: raw.IID ? 'ok' : 'error', min_entropy: raw.min_entropy,
-		message: raw.IID ? 'IID 检验通过' : (raw.reason || 'IID 检验未通过')
-	}
-	return { status: 'ok', min_entropy: raw.min_entropy, details: raw.details, message: 'Non-IID 保守熵评估完成' }
+	runtimeLogText.value = `${runtimeLogText.value}\n${line}`
 }
 
-function updateResultRows() {
-	const tr = testResult.value
-	if (!tr) { resultRows.value = []; return }
-	const nr = normalizeResult(tr.mode, tr.raw)
-	const modeLabel = formatMode(tr.mode)
-	const rows = []
+const clearInputDataPath = () => { testInputParams.inputDataPath = '' }
+const clearRuntimeLogText = () => { runtimeLogText.value = '' }
 
-	if (tr.mode === 'restart') {
-		rows.push(
-			{ index: 1, mode: modeLabel, name: 'H_min', value: formatNum(tr.raw.H_I), result: nr.status === 'ok' ? '通过' : '未通过' },
-			{ index: 2, mode: modeLabel, name: 'F', value: formatNum(tr.raw.F), result: '-' },
-			{ index: 3, mode: modeLabel, name: 'U', value: formatNum(tr.raw.U), result: '-' }
-		)
-	} else if (tr.mode === 'iid') {
-		rows.push(
-			{ index: 1, mode: modeLabel, name: 'IID', value: '-', result: nr.status === 'ok' ? '通过' : '未通过' },
-			{ index: 2, mode: modeLabel, name: 'H_min', value: formatNum(tr.raw.min_entropy), result: '-' }
-		)
-	} else {
-		let idx = 1
-		if (tr.raw.details) {
-			for (const [key, val] of Object.entries(tr.raw.details)) {
-				rows.push({ index: idx++, mode: modeLabel, name: `${key} (${estimatorNames[key] || key})`, value: formatNum(val), result: '-' })
-			}
-		}
-		if (rows.length === 0) {
-			rows.push({ index: 1, mode: modeLabel, name: 'H_min', value: formatNum(tr.raw.min_entropy), result: '-' })
-		}
+const stopPolling = () => {
+	if (pollTimerId !== null) {
+		clearInterval(pollTimerId)
+		pollTimerId = null
 	}
-
-	const note = nr.message
-	if (rows.length > 0) rows[0].result = `${rows[0].result} (${note})`
-
-	resultRows.value = rows
 }
 
-/* ── Mode switch ── */
+// -- File handling ---------------------------------------------------------
+
+async function handlePickFile() {
+	try {
+		const picked = await window.pywebview.api.pick_file()
+		if (picked) {
+			testInputParams.inputDataPath = picked
+			appendRuntimeLog(`[INFO] 已选择文件: ${picked}`)
+		}
+	} catch (error) {
+		appendRuntimeLog(`[WARN] 选择文件取消或失败: ${error?.message ?? error}`)
+	}
+}
+
+// -- Validation ------------------------------------------------------------
+
+function validate() {
+	if (!testInputParams.inputDataPath.trim()) return t('est.err.noFile')
+	const ext = testInputParams.inputDataPath.trim().split('.').pop()?.toLowerCase()
+	if (!['bin', 'dat', 'raw'].includes(ext)) return '不支持的文件格式，请选择 .bin / .dat / .raw 文件'
+	if (!testMode.value) return t('est.err.noMode')
+	if (isRestart.value) {
+		const hi = parseFloat(hiValue.value)
+		if (isNaN(hi) || hi < 0) return t('est.err.hiRequired')
+	}
+	const bps = parseInt(bitsPerSymbol.value, 10)
+	if (isNaN(bps) || bps < 1 || bps > 8) return t('est.err.bpsRange')
+	if (isNonIID.value && useBitsValue.value) {
+		const ub = parseInt(useBitsValue.value, 10)
+		if (isNaN(ub) || ub < 1) return t('est.err.ubRange')
+	}
+	return null
+}
+
+// -- Mode switch -----------------------------------------------------------
+
 function onModeChange() {
 	hiValue.value = ''
 	useBitsValue.value = ''
 	resultData.value = null
 	resultJson.value = ''
-	resultRows.value = []
 }
 
-/* ── Test execution ── */
+// -- Result export ---------------------------------------------------------
+
+async function exportResults() {
+	if (!resultJson.value) return
+	try {
+		if (!window.pywebview?.api) {
+			appendRuntimeLog('[ERROR] pywebview API 不可用')
+			return
+		}
+		const path = await window.pywebview.api.save_file('entropy_result.json')
+		if (!path) return
+		await window.pywebview.api.export_results_file(resultJson.value, path)
+		appendRuntimeLog('[INFO] 结果已导出: ' + path)
+	} catch (err) {
+		appendRuntimeLog('[ERROR] 导出失败: ' + (err?.message ?? err))
+	}
+}
+
+// -- Test execution --------------------------------------------------------
+
 async function handleStartTest() {
 	if (isRunning.value) {
+		stopPolling()
+		isRunning.value = false
+		appendRuntimeLog('[INFO] 已停止测试')
 		try {
-			stopRequestedByUser.value = true
-			abortController?.abort()
-			abortController = null
-			isRunning.value = false
-			appendRuntimeLog('[INFO] 已发送停止测试请求')
-		} catch (error) {
-			stopRequestedByUser.value = false
-			appendRuntimeLog(`[WARN] 停止请求失败: ${error?.message ?? error}`)
-		}
+			window.pywebview?.api?.cleanup_entropy_test?.()
+		} catch (_) { /* best-effort */ }
 		return
 	}
 
 	const err = validate()
-	if (err) { appendRuntimeLog(`[ERROR] ${err}`); return }
+	if (err) {
+		appendRuntimeLog(`[ERROR] ${err}`)
+		return
+	}
 
 	resultData.value = null
-	resultRows.value = []
-	isRunning.value = true
-	const controller = new AbortController()
-	abortController = controller
-
-	const requestStartPerf = performance.now()
-
-	appendRuntimeLog(`[INFO] 开始提交参数并执行测试... (${new Date().toLocaleString()})`)
-	appendRuntimeLog(`[INFO] 模式: ${formatMode(testMode.value)}, bits_per_symbol: ${bitsPerSymbol.value}`)
+	resultJson.value = ''
 
 	try {
+		if (!window.pywebview?.api) {
+			appendRuntimeLog('[ERROR] pywebview API 不可用，请在桌面应用中运行')
+			return
+		}
+
 		const payload = {
 			datafile: testInputParams.inputDataPath.trim(),
 			bits_per_symbol: parseInt(bitsPerSymbol.value, 10) || 8,
 			mode: testMode.value,
-			verbose: verbose.value
+			verbose: verbose.value,
 		}
 		if (isRestart.value) payload.h_i = parseFloat(hiValue.value) || null
 		if (isNonIID.value) payload.use_bits = parseInt(useBitsValue.value, 10) || null
 
-		const apiUrl = apiOrigin.value.replace(/\/$/, '') + '/api/v1/entropy/est'
-
-		const resp = await fetch(apiUrl, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(payload),
-			signal: controller.signal
-		})
-		const body = await resp.json()
-
-		resultJson.value = JSON.stringify(body, null, 2)
-		if (body.data) resultData.value = body.data
-		updateResultRows()
-		appendRuntimeLog('[INFO] 测试完成')
-	} catch (err) {
-		if (err?.name === 'AbortError') {
-			appendRuntimeLog('[INFO] 测试已中止')
-		} else {
-			const msg = err?.message || 'Test failed'
-			const displayMsg = msg.toLowerCase().includes('failed to fetch')
-				? t('est.err.fetchFailed') + ': ' + apiOrigin.value : msg
-			appendRuntimeLog(`[ERROR] ${displayMsg}`)
+		const resp = await window.pywebview.api.start_entropy_test(payload)
+		if (!resp.ok) {
+			appendRuntimeLog(`[ERROR] ${resp.error}`)
+			return
 		}
-	} finally {
-		const elapsedMs = performance.now() - requestStartPerf
-		appendRuntimeLog(`[INFO] 总测试时间: ${formatDurationMs(elapsedMs)}`)
-		abortController = null
-		isRunning.value = false
-		stopRequestedByUser.value = false
+	} catch (e) {
+		appendRuntimeLog(`[ERROR] 启动测试失败: ${e?.message ?? e}`)
+		return
 	}
+
+	isRunning.value = true
+	const requestStartPerf = performance.now()
+
+	appendRuntimeLog(`[INFO] 开始提交参数并执行测试... (${new Date().toLocaleString()})`)
+	appendRuntimeLog(`[INFO] 模式: ${formatMode(testMode.value)}, bits_per_symbol: ${bitsPerSymbol.value}`)
+	appendRuntimeLog('[INFO] 实时输出如下:')
+
+	pollTimerId = setInterval(async () => {
+		try {
+			const poll = await window.pywebview.api.poll_entropy_test()
+
+			for (const msg of poll.logs) {
+				if (msg.type === 'log') {
+					appendRuntimeLog(msg.line)
+				} else if (msg.type === 'error') {
+					appendRuntimeLog(`[ERROR] ${msg.message}`)
+				} else if (msg.type === 'result') {
+					resultJson.value = JSON.stringify(msg.data, null, 2)
+					if (msg.data.data) resultData.value = msg.data.data
+					appendRuntimeLog('[INFO] 测试完成')
+				}
+			}
+
+			if (!poll.running) {
+				stopPolling()
+				const elapsedMs = performance.now() - requestStartPerf
+				appendRuntimeLog(`[INFO] 总测试时间: ${formatDurationMs(elapsedMs)}`)
+				isRunning.value = false
+				// Tell backend to release all held memory (queue, result, datasets)
+				window.pywebview?.api?.cleanup_entropy_test?.()
+			}
+		} catch (e) {
+			stopPolling()
+			appendRuntimeLog(`[ERROR] 轮询失败: ${e?.message ?? e}`)
+			isRunning.value = false
+		}
+	}, 200)
 }
 
-/* ── Lifecycle ── */
+// -- Lifecycle -------------------------------------------------------------
+
 onMounted(async () => {
 	try {
 		const settings = await window.pywebview?.api?.get_settings?.() || {}
 		if (settings.mode) testMode.value = settings.mode
 		if (settings.bits_per_symbol) bitsPerSymbol.value = settings.bits_per_symbol
-	} catch (e) { console.warn('Failed to initialize settings:', e) }
+	} catch (e) {
+		console.warn('Failed to initialize settings:', e)
+	}
 })
 
-watch(testMode, () => { updateResultRows() })
-
 onBeforeUnmount(() => {
-	abortController?.abort()
-	abortController = null
+	stopPolling()
 })
 </script>
 
@@ -294,46 +314,43 @@ onBeforeUnmount(() => {
 		<!-- Left: 结果汇总 -->
 		<div class="summary_panel">
 			<header class="summary_title">
-				<span class="summary_dot"></span>
+				<span class="summary_dot" />
 				<h2>结果汇总:</h2>
-				<button v-if="hasTableResult" class="summary_save_hint" type="button" @click="activeResultTab = 'json'">查看 JSON</button>
+				<div v-if="hasTableResult" class="summary_actions">
+					<button class="summary_action_btn" type="button"
+						@click="activeResultTab = activeResultTab === 'json' ? 'summary' : 'json'">
+						{{ activeResultTab === 'json' ? '收起 JSON' : '展开 JSON' }}
+					</button>
+					<button class="summary_action_btn primary" type="button" @click="exportResults">结果导出</button>
+				</div>
 			</header>
 
-			<div class="result_table_wrap">
-				<table class="result_table">
-					<thead>
-						<tr>
-							<th v-for="header in tableHeaders" :key="header">{{ header }}</th>
-						</tr>
-					</thead>
-					<tbody>
-						<tr v-for="row in tableRows" :key="row.id">
-							<td>{{ row.id }}</td>
-							<td>{{ row.mode }}</td>
-							<td>{{ row.name }}</td>
-							<td>{{ row.value }}</td>
-							<td>{{ row.result }}</td>
-						</tr>
-					</tbody>
-				</table>
-			</div>
-
-			<div v-if="testResult?.mode === 'noniid' && testResult?.raw?.details" class="detail_section">
-				<h3>Non-IID 估计器详情</h3>
+			<div v-if="testResult && detailTableRows.length > 0" class="detail_section">
 				<div class="detail_table_wrap">
 					<table class="detail_table">
 						<thead>
-							<tr><th>估计器</th><th>英文名</th><th>min_entropy</th></tr>
+							<tr>
+								<th>估计器</th>
+								<th>英文名</th>
+								<th>{{ detailTableValueHeader }}</th>
+							</tr>
 						</thead>
 						<tbody>
-							<tr v-for="(val, key) in testResult.raw.details" :key="key"
-								:class="{ 'row-min': val === Math.min(...Object.values(testResult.raw.details)) }">
-								<td>{{ key }}</td>
-								<td>{{ estimatorNames[key] || key }}</td>
-								<td>{{ formatNum(val) }}</td>
+							<tr v-for="row in detailTableRows" :key="row.key"
+								:class="{ 'row-min': row.value === Math.min(...detailTableRows.map(r => Number(r.value))) }">
+								<td>{{ row.name }}</td>
+								<td>{{ row.english }}</td>
+								<td>{{ typeof row.value === 'boolean' ? (row.value ? '通过' : '未通过') :
+									formatNum(row.value) }}</td>
 							</tr>
 						</tbody>
 					</table>
+				</div>
+			</div>
+
+			<div v-if="resultJson" class="json_output_row">
+				<div v-show="activeResultTab === 'json'" class="json_output_wrap">
+					<pre>{{ resultJson }}</pre>
 				</div>
 			</div>
 		</div>
@@ -351,9 +368,9 @@ onBeforeUnmount(() => {
 					</select>
 				</div>
 				<label class="verbose_toggle" :title="t('est.verbose.desc') || '启用详细输出，显示每个估计器的计算过程'">
-					<input type="checkbox" v-model="verbose" />
+					<input v-model="verbose" type="checkbox" />
 					<span class="verbose_toggle_track">
-						<span class="verbose_toggle_thumb"></span>
+						<span class="verbose_toggle_thumb" />
 					</span>
 					<span class="verbose_toggle_label">verbose</span>
 				</label>
@@ -366,21 +383,21 @@ onBeforeUnmount(() => {
 						bps
 						<span class="param_tooltip">{{ t('est.bps.desc') }}</span>
 					</label>
-					<input type="number" v-model.number="bitsPerSymbol" :min="1" :max="8" step="1" />
+					<input v-model.number="bitsPerSymbol" type="number" :min="1" :max="8" step="1" />
 				</div>
 				<div class="field_pair" :class="{ disabled: !isRestart }">
 					<label>
 						h_i
 						<span class="param_tooltip">{{ t('est.hi.desc') }} Restart 模式下必填。</span>
 					</label>
-					<input type="number" v-model="hiValue" min="0" step="0.01" :disabled="!isRestart" />
+					<input v-model="hiValue" type="number" min="0" step="0.01" :disabled="!isRestart" />
 				</div>
 				<div class="field_pair" :class="{ disabled: !isNonIID }">
 					<label>
 						use_bits
 						<span class="param_tooltip">{{ t('est.ub.desc') }} Non-IID 模式下可选。</span>
 					</label>
-					<input type="number" v-model="useBitsValue" min="1" step="1" :disabled="!isNonIID" />
+					<input v-model="useBitsValue" type="number" min="1" step="1" :disabled="!isNonIID" />
 				</div>
 			</div>
 
@@ -396,15 +413,10 @@ onBeforeUnmount(() => {
 			<!-- Progress + Start button -->
 			<div class="action_progress_row">
 				<div ref="progressTrackRef" class="progress_track">
-					<div class="progress_fill"></div>
+					<div class="progress_fill" />
 					<span>{{ progressDisplay }}</span>
 				</div>
-				<button
-					class="start_btn"
-					:class="{ 'is-running': isRunning }"
-					type="button"
-					@click="handleStartTest"
-				>
+				<button class="start_btn" :class="{ 'is-running': isRunning }" type="button" @click="handleStartTest">
 					{{ startBtnText }}
 				</button>
 			</div>
@@ -412,24 +424,9 @@ onBeforeUnmount(() => {
 			<!-- Terminal output -->
 			<div class="terminal_output_row">
 				<div class="terminal_output_wrap">
-					<textarea
-						class="terminal_output_box"
-						:value="runtimeLogText"
-						wrap="off"
-						readonly
-						spellcheck="false"
-					></textarea>
+					<textarea class="terminal_output_box" :value="runtimeLogText" wrap="off" readonly
+						spellcheck="false" />
 					<span v-if="hasRuntimeLogText" class="clear_output_hint" @click="clearRuntimeLogText">清除</span>
-				</div>
-			</div>
-
-			<!-- JSON view -->
-			<div v-if="resultJson" class="json_output_row">
-				<button class="json_toggle_btn" type="button" @click="activeResultTab = activeResultTab === 'json' ? 'summary' : 'json'">
-					{{ activeResultTab === 'json' ? '收起 JSON' : '展开 JSON' }}
-				</button>
-				<div v-show="activeResultTab === 'json'" class="json_output_wrap">
-					<pre>{{ resultJson }}</pre>
 				</div>
 			</div>
 		</div>
@@ -437,7 +434,8 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* ── Page root ── */
+/* -- Page root ---------------------------------------------------------- */
+
 .est-main {
 	--wails-draggable: no-drag;
 	display: grid;
@@ -455,7 +453,8 @@ onBeforeUnmount(() => {
 	font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", sans-serif;
 }
 
-/* ── Shared panel ── */
+/* -- Shared panel ------------------------------------------------------- */
+
 .summary_panel,
 .control_panel {
 	min-width: 0;
@@ -468,7 +467,8 @@ onBeforeUnmount(() => {
 	box-shadow: none;
 }
 
-/* ── Left summary panel ── */
+/* -- Left summary panel ------------------------------------------------- */
+
 .summary_panel {
 	display: flex;
 	flex-direction: column;
@@ -503,8 +503,15 @@ onBeforeUnmount(() => {
 	letter-spacing: 0.2px;
 }
 
-.summary_save_hint {
+.summary_actions {
 	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex-shrink: 0;
+}
+
+.summary_action_btn {
 	height: 28px;
 	padding: 0 10px;
 	border: 1px solid var(--field-border);
@@ -514,100 +521,40 @@ onBeforeUnmount(() => {
 	font-size: clamp(11px, 0.8vw, 13px);
 	font-weight: 600;
 	cursor: pointer;
+	white-space: nowrap;
 	transition: opacity 0.16s ease, filter 0.16s ease;
 }
 
-.summary_save_hint:hover { filter: brightness(1.12); }
+.summary_action_btn:hover {
+	filter: brightness(1.12);
+}
 
-.result_table_wrap {
-	--wails-draggable: no-drag;
-	flex: 1;
-	width: 100%;
-	max-width: 100%;
-	min-width: 0;
+.summary_action_btn.primary {
+	border-color: var(--rt-start-btn-border);
+	background: linear-gradient(180deg, var(--rt-start-btn-bg-start), var(--rt-start-btn-bg-end));
+	color: var(--rt-start-btn-text);
+}
+
+.summary_action_btn.primary:hover {
+	filter: brightness(1.06) saturate(1.04);
+}
+
+/* -- Detail table ------------------------------------------------------- */
+
+.detail_section {
+	flex: 1 1 0;
 	min-height: 0;
-	max-height: 100%;
-	position: relative;
-	isolation: isolate;
-	overflow: auto;
-	overscroll-behavior: none;
-	touch-action: pan-x pan-y;
-	contain: layout paint;
-	border: 1px solid var(--rt-table-wrap-border);
-	border-radius: 0;
-	background: var(--rt-table-wrap-bg);
-	scrollbar-width: auto;
-	scrollbar-color: var(--rt-table-scroll-thumb) var(--rt-table-scroll-track);
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 }
-
-.result_table_wrap::-webkit-scrollbar { width: 10px; height: 10px; }
-.result_table_wrap::-webkit-scrollbar-track { border-radius: 0; background: var(--rt-table-scroll-track); }
-.result_table_wrap::-webkit-scrollbar-thumb { border-radius: 0; background: var(--rt-table-scroll-thumb); }
-.result_table_wrap::-webkit-scrollbar-thumb:hover { background: var(--rt-table-scroll-thumb-hover); }
-
-.result_table {
-	width: max(100%, 500px);
-	min-width: 500px;
-	border-collapse: collapse;
-	background: var(--rt-table-wrap-bg);
-	color: var(--rt-table-text);
-	font-size: clamp(10px, 0.72vw, 12px);
-	transform: translateZ(0);
-}
-
-.result_table th,
-.result_table td {
-	height: clamp(22px, 1.9vh, 26px);
-	padding: 0 6px;
-	border: 1px solid var(--rt-table-cell-border);
-	background: var(--rt-table-cell-bg);
-	text-align: left;
-	vertical-align: middle;
-	white-space: nowrap;
-}
-
-.result_table th {
-	position: sticky;
-	top: 0;
-	z-index: 4;
-	background: var(--rt-table-head-bg);
-	color: var(--rt-table-head-text);
-	font-weight: 700;
-}
-
-.result_table th:nth-child(1),
-.result_table td:nth-child(1) {
-	position: sticky;
-	left: 0;
-	z-index: 3;
-	width: 52px;
-	min-width: 52px;
-	background: var(--rt-table-sticky-bg);
-	box-shadow: inset -1px 0 0 var(--rt-table-cell-border);
-	text-align: center;
-}
-
-.result_table th:nth-child(1) { z-index: 6; background: var(--rt-table-head-bg); }
-
-.result_table th:nth-child(2),
-.result_table td:nth-child(2) { width: 90px; min-width: 90px; text-align: center; }
-
-.result_table th:nth-child(3),
-.result_table td:nth-child(3) { width: 160px; min-width: 160px; text-align: center; }
-
-.result_table th:nth-child(4),
-.result_table td:nth-child(4),
-.result_table th:nth-child(5),
-.result_table td:nth-child(5) { text-align: center; }
-
-/* ── Detail table (Non-IID) ── */
-.detail_section { margin-top: 10px; flex-shrink: 0; }
 
 .detail_section h3 {
 	margin: 0 0 6px;
 	font-size: clamp(12px, 0.85vw, 14px);
 	font-weight: 700;
 	color: var(--rt-title-dot-start);
+	flex-shrink: 0;
 }
 
 .detail_table_wrap {
@@ -616,6 +563,8 @@ onBeforeUnmount(() => {
 	background: var(--rt-table-wrap-bg);
 	scrollbar-width: thin;
 	scrollbar-color: var(--rt-table-scroll-thumb) var(--rt-table-scroll-track);
+	flex: 1 1 0;
+	min-height: 0;
 }
 
 .detail_table {
@@ -645,9 +594,13 @@ onBeforeUnmount(() => {
 	font-weight: 700;
 }
 
-.detail_table .row-min { background: var(--rt-table-head-bg); font-weight: 700; }
+.detail_table .row-min {
+	background: var(--rt-table-head-bg);
+	font-weight: 700;
+}
 
-/* ── Right control panel ── */
+/* -- Right control panel ------------------------------------------------ */
+
 .control_panel {
 	--action-btn-width: 110px;
 	--pair-label-width: 12.5ch;
@@ -664,38 +617,44 @@ onBeforeUnmount(() => {
 	scrollbar-color: var(--rt-scroll-thumb) var(--rt-scroll-track);
 }
 
-.control_panel::-webkit-scrollbar { width: 8px; height: 8px; }
-.control_panel::-webkit-scrollbar-track { border-radius: 6px; background: var(--rt-scroll-track); }
-.control_panel::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--rt-scroll-thumb); }
-.control_panel::-webkit-scrollbar-thumb:hover { background: var(--rt-scroll-thumb-hover); }
+.control_panel::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
 
-/* ── Shared form primitives ── */
+.control_panel::-webkit-scrollbar-track {
+	border-radius: 6px;
+	background: var(--rt-scroll-track);
+}
+
+.control_panel::-webkit-scrollbar-thumb {
+	border-radius: 6px;
+	background: var(--rt-scroll-thumb);
+}
+
+.control_panel::-webkit-scrollbar-thumb:hover {
+	background: var(--rt-scroll-thumb-hover);
+}
+
+/* -- Shared form primitives --------------------------------------------- */
+
 .threshold_row,
 .selectors_row,
 .path_row,
 .terminal_output_row {
 	display: flex;
 	align-items: center;
+	flex-wrap: wrap;
 	gap: var(--row-inline-gap);
 	row-gap: var(--row-block-gap);
 }
 
-.threshold_row,
-.selectors_row,
-.path_row,
-.terminal_output_row {
-	flex-wrap: wrap;
-}
+/* -- Threshold row (bps / h_i / use_bits) ------------------------------ */
 
-/* ── Threshold row (bps / h_i / use_bits) ── */
 .threshold_row {
 	justify-content: flex-start;
 	flex-wrap: nowrap;
 	column-gap: clamp(8px, 0.85vw, 14px);
-}
-
-.field_pair input {
-	width: var(--pair-value-width);
 }
 
 .threshold_row .field_pair {
@@ -720,11 +679,16 @@ onBeforeUnmount(() => {
 	gap: var(--row-inline-gap);
 }
 
+.field_pair input {
+	width: var(--pair-value-width);
+}
+
 .field_pair label {
 	display: flex;
 	flex: 0 0 auto;
 	align-items: center;
 	justify-content: center;
+	position: relative;
 	width: var(--pair-label-width);
 	height: 30px;
 	min-width: 0;
@@ -739,43 +703,7 @@ onBeforeUnmount(() => {
 	text-align: center;
 }
 
-.control_panel input,
-.control_panel select {
-	height: 30px;
-	padding: 0 10px;
-	box-sizing: border-box;
-	border: 1px solid var(--field-border);
-	border-radius: 10px;
-	background: var(--field-bg);
-	color: var(--field-text);
-	font-size: clamp(12px, 0.9vw, 14px);
-	outline: none;
-	transition: border-color 0.16s ease, box-shadow 0.16s ease;
-}
-
-.control_panel input::placeholder { color: var(--field-placeholder); }
-
-.control_panel input[type="number"]::-webkit-inner-spin-button,
-.control_panel input[type="number"]::-webkit-outer-spin-button {
-	-webkit-appearance: none;
-	margin: 0;
-}
-
-.control_panel input[type="number"] {
-	-moz-appearance: textfield;
-	appearance: textfield;
-}
-
-.control_panel input:focus,
-.control_panel select:focus {
-	border-color: var(--focus-border);
-	box-shadow: 0 0 0 2px var(--focus-ring);
-}
-
-/* ── Floating tooltip ── */
-.field_pair label {
-	position: relative;
-}
+/* -- Floating tooltip --------------------------------------------------- */
 
 .field_pair label .param_tooltip {
 	display: none;
@@ -803,7 +731,45 @@ onBeforeUnmount(() => {
 	display: block;
 }
 
-/* ── Verbose toggle switch ── */
+/* -- Input & select primitives ------------------------------------------ */
+
+.control_panel input,
+.control_panel select {
+	height: 30px;
+	padding: 0 10px;
+	box-sizing: border-box;
+	border: 1px solid var(--field-border);
+	border-radius: 10px;
+	background: var(--field-bg);
+	color: var(--field-text);
+	font-size: clamp(12px, 0.9vw, 14px);
+	outline: none;
+	transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.control_panel input::placeholder {
+	color: var(--field-placeholder);
+}
+
+.control_panel input[type="number"]::-webkit-inner-spin-button,
+.control_panel input[type="number"]::-webkit-outer-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.control_panel input[type="number"] {
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
+.control_panel input:focus,
+.control_panel select:focus {
+	border-color: var(--focus-border);
+	box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* -- Verbose toggle switch ---------------------------------------------- */
+
 .verbose_toggle {
 	display: inline-flex;
 	align-items: center;
@@ -816,10 +782,9 @@ onBeforeUnmount(() => {
 	border-radius: 9px;
 	background: var(--label-bg);
 	cursor: pointer;
-	transition: border-color 0.16s ease, background 0.16s ease;
 	user-select: none;
-	-webkit-user-select: none;
 	box-sizing: border-box;
+	transition: border-color 0.16s ease, background 0.16s ease;
 }
 
 .verbose_toggle:hover {
@@ -845,7 +810,7 @@ onBeforeUnmount(() => {
 	transition: background 0.2s ease;
 }
 
-.verbose_toggle input[type="checkbox"]:checked + .verbose_toggle_track {
+.verbose_toggle input[type="checkbox"]:checked+.verbose_toggle_track {
 	background: var(--focus-border);
 }
 
@@ -861,7 +826,7 @@ onBeforeUnmount(() => {
 	transition: transform 0.2s ease;
 }
 
-.verbose_toggle input[type="checkbox"]:checked + .verbose_toggle_track .verbose_toggle_thumb {
+.verbose_toggle input[type="checkbox"]:checked+.verbose_toggle_track .verbose_toggle_thumb {
 	transform: translateX(14px);
 }
 
@@ -873,7 +838,8 @@ onBeforeUnmount(() => {
 	line-height: 1;
 }
 
-/* ── Selectors row (mode + verbose) ── */
+/* -- Selectors row (mode + verbose) ------------------------------------- */
+
 .selectors_row {
 	justify-content: flex-start;
 	flex-wrap: nowrap;
@@ -881,9 +847,17 @@ onBeforeUnmount(() => {
 	width: 100%;
 }
 
+.selector_pair {
+	flex: 1 1 0;
+	min-width: 0;
+}
+
 .selector_pair select {
+	width: 100%;
+	min-width: 0;
 	height: 30px;
 	padding-right: 24px;
+	font-size: clamp(12px, 0.9vw, 14px);
 	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23DAE6FB' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 	background-repeat: no-repeat;
 	background-position: right 8px center;
@@ -893,18 +867,9 @@ onBeforeUnmount(() => {
 	-moz-appearance: none;
 }
 
-.selectors_row .selector_pair {
-	flex: 1 1 0;
-	min-width: 0;
+.control_panel select::-ms-expand {
+	display: none;
 }
-
-.selector_pair select {
-	width: 100%;
-	min-width: 0;
-	font-size: clamp(12px, 0.9vw, 14px);
-}
-
-.control_panel select::-ms-expand { display: none; }
 
 select option {
 	background-color: var(--select-option-bg);
@@ -921,8 +886,11 @@ select option:hover {
 	color: var(--select-option-selected-text);
 }
 
-/* ── Path row ── */
-.path_row { justify-content: flex-start; }
+/* -- Path row ----------------------------------------------------------- */
+
+.path_row {
+	justify-content: flex-start;
+}
 
 .path_row input {
 	flex: 1;
@@ -935,7 +903,10 @@ select option:hover {
 	min-width: 0;
 }
 
-.selected_path_input_wrap input { width: 100%; padding-right: 58px; }
+.selected_path_input_wrap input {
+	width: 100%;
+	padding-right: 58px;
+}
 
 .clear_hint {
 	position: absolute;
@@ -953,9 +924,12 @@ select option:hover {
 }
 
 .selected_path_input_wrap:hover .clear_hint,
-.selected_path_input_wrap:focus-within .clear_hint { opacity: 0.82; }
+.selected_path_input_wrap:focus-within .clear_hint {
+	opacity: 0.82;
+}
 
-/* ── Action progress row ── */
+/* -- Action progress row ----------------------------------------------- */
+
 .action_progress_row {
 	display: flex;
 	align-items: center;
@@ -970,6 +944,8 @@ select option:hover {
 	flex: 1;
 	min-width: 0;
 }
+
+/* -- Buttons ----------------------------------------------------------- */
 
 .pick_btn,
 .start_btn {
@@ -994,33 +970,49 @@ select option:hover {
 }
 
 .pick_btn:hover,
-.start_btn:hover { filter: brightness(1.12); }
+.start_btn:hover {
+	filter: brightness(1.12);
+}
 
 .start_btn {
 	height: 34px;
 	border-color: var(--rt-start-btn-border);
 	background: linear-gradient(180deg, var(--rt-start-btn-bg-start), var(--rt-start-btn-bg-end));
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 6px 14px var(--rt-start-btn-shadow);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.36),
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 6px 14px var(--rt-start-btn-shadow);
 	color: var(--rt-start-btn-text);
 	text-shadow: none;
 }
 
 .start_btn:hover {
 	filter: brightness(1.06) saturate(1.04);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 18px var(--rt-start-btn-shadow);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.42),
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 8px 18px var(--rt-start-btn-shadow);
 }
 
 .start_btn.is-running {
 	border-color: var(--rt-stop-btn-border);
 	background: linear-gradient(180deg, var(--rt-stop-btn-bg-start), var(--rt-stop-btn-bg-end));
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 6px 14px var(--rt-stop-btn-shadow);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.3),
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 6px 14px var(--rt-stop-btn-shadow);
 	color: var(--rt-stop-btn-text);
 }
 
 .start_btn.is-running:hover {
 	filter: brightness(1.05) saturate(1.03);
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 18px var(--rt-stop-btn-shadow);
+	box-shadow:
+		inset 0 1px 0 rgba(255, 255, 255, 0.36),
+		0 0 0 1px rgba(255, 255, 255, 0.08),
+		0 8px 18px var(--rt-stop-btn-shadow);
 }
+
+/* -- Progress track ---------------------------------------------------- */
 
 .progress_track {
 	position: relative;
@@ -1063,7 +1055,8 @@ select option:hover {
 	text-shadow: var(--rt-progress-text-shadow);
 }
 
-/* ── Terminal output row ── */
+/* -- Terminal output row ----------------------------------------------- */
+
 .terminal_output_row {
 	display: block;
 	flex: 1 1 auto;
@@ -1101,16 +1094,26 @@ select option:hover {
 	word-break: normal;
 	cursor: text;
 	user-select: text;
-	-ms-user-select: text;
-	-moz-user-select: text;
-	-webkit-user-select: text;
 	scrollbar-width: thin;
 	scrollbar-color: var(--rt-scroll-thumb) var(--rt-scroll-track-transparent);
 }
 
-.terminal_output_box::-webkit-scrollbar { width: 8px; height: 8px; }
-.terminal_output_box::-webkit-scrollbar-track { border-radius: 10px; background: var(--rt-scroll-track-transparent); }
-.terminal_output_box::-webkit-scrollbar-thumb { border: 1px solid transparent; border-radius: 10px; background: var(--rt-scroll-thumb); background-clip: padding-box; }
+.terminal_output_box::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+.terminal_output_box::-webkit-scrollbar-track {
+	border-radius: 10px;
+	background: var(--rt-scroll-track-transparent);
+}
+
+.terminal_output_box::-webkit-scrollbar-thumb {
+	border: 1px solid transparent;
+	border-radius: 10px;
+	background: var(--rt-scroll-thumb);
+	background-clip: padding-box;
+}
 
 .clear_output_hint {
 	position: absolute;
@@ -1128,28 +1131,19 @@ select option:hover {
 }
 
 .terminal_output_wrap:hover .clear_output_hint,
-.terminal_output_wrap:focus-within .clear_output_hint { opacity: 0.82; }
-
-/* ── JSON output ── */
-.json_output_row { flex-shrink: 0; }
-
-.json_toggle_btn {
-	padding: 6px 14px;
-	border: 1px solid var(--panel-border);
-	border-radius: 10px;
-	background: var(--field-bg);
-	color: var(--rt-meta-key-text);
-	font-size: clamp(11px, 0.8vw, 13px);
-	font-weight: 600;
-	cursor: pointer;
-	transition: filter 0.16s ease;
+.terminal_output_wrap:focus-within .clear_output_hint {
+	opacity: 0.82;
 }
 
-.json_toggle_btn:hover { filter: brightness(1.12); }
+/* -- JSON output ------------------------------------------------------- */
+
+.json_output_row {
+	flex-shrink: 0;
+	max-height: 200px;
+}
 
 .json_output_wrap {
-	margin-top: 8px;
-	max-height: 200px;
+	height: 100%;
 	overflow: auto;
 	padding: 10px;
 	border: 1px solid var(--rt-output-border);
@@ -1157,6 +1151,7 @@ select option:hover {
 	background: var(--rt-output-bg);
 	scrollbar-width: thin;
 	scrollbar-color: var(--rt-scroll-thumb) var(--rt-scroll-track-transparent);
+	box-sizing: border-box;
 }
 
 .json_output_wrap pre {
@@ -1169,18 +1164,30 @@ select option:hover {
 	word-break: break-all;
 }
 
-/* ── Animations ── */
+/* -- Animations -------------------------------------------------------- */
+
 @keyframes progressGradientShift {
-	0% { background-position: 0% 50%; }
-	100% { background-position: 100% 50%; }
+	0% {
+		background-position: 0% 50%;
+	}
+
+	100% {
+		background-position: 100% 50%;
+	}
 }
 
 @keyframes progressGlowSweep {
-	0% { transform: translateX(-100%); }
-	100% { transform: translateX(130%); }
+	0% {
+		transform: translateX(-100%);
+	}
+
+	100% {
+		transform: translateX(130%);
+	}
 }
 
-/* ── Responsive ── */
+/* -- Responsive -------------------------------------------------------- */
+
 @media (max-width: 820px) {
 	.est-main {
 		grid-template-columns: minmax(0, 4fr) minmax(0, 6fr);
@@ -1192,14 +1199,15 @@ select option:hover {
 		min-width: 130px;
 	}
 
-	.result_table { min-width: 460px; }
-	.result_table th,
-	.result_table td { height: 22px; }
-
 	.start_btn,
-	.pick_btn { height: 32px; padding: 0 12px; }
+	.pick_btn {
+		height: 32px;
+		padding: 0 12px;
+	}
 
 	.terminal_output_row,
-	.terminal_output_box { min-height: 96px; }
+	.terminal_output_box {
+		min-height: 96px;
+	}
 }
 </style>

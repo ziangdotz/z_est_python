@@ -14,6 +14,11 @@ import tkinter as _tk
 import urllib.request
 from tkinter import filedialog as _filedialog
 
+from .est_test_vue3_pywebview import (
+    cleanup_entropy_test as _cleanup_entropy_test,
+    poll_entropy_test as _poll_entropy_test,
+    start_entropy_test as _start_entropy_test,
+)
 from .win32 import (
     find_hwnd_by_title,
     find_main_hwnd,
@@ -32,7 +37,7 @@ class Api:
         self._window_title: str | None = None
         self._saved_theme: str | None = None
 
-    # ──────────── Static helpers ──────────────────────────────────────
+    # -- Static helpers ---------------------------------------------------
 
     @staticmethod
     def get_system_dark() -> bool:
@@ -57,7 +62,7 @@ class Api:
             return False
         return Api.get_system_dark()
 
-    # ──────────── Public: window & settings ───────────────────────────
+    # -- Public: window & settings ----------------------------------------
 
     def set_window(self, window: object, title: str) -> None:
         self._window = window
@@ -66,7 +71,7 @@ class Api:
     def get_settings(self) -> dict:
         return {"theme": self.get_saved_theme()}
 
-    # ──────────── Theme persistence ───────────────────────────────────
+    # -- Theme persistence ------------------------------------------------
 
     def get_saved_theme(self) -> str:
         if self._saved_theme in ("light", "dark"):
@@ -96,7 +101,7 @@ class Api:
             time.sleep(0.05)
         logger.warning("HWND not found after 20 retries, skipping titlebar sync")
 
-    # ──────────── HTTP proxy (frontend calls via pywebview) ────────────
+    # -- HTTP proxy (frontend calls via pywebview) -------------------------
 
     def post_json(self, url: str, payload: dict) -> dict:
         """Forward a JSON POST request from the frontend to the target URL."""
@@ -110,7 +115,21 @@ class Api:
         with urllib.request.urlopen(req) as resp:
             return _json.loads(resp.read().decode("utf-8"))
 
-    # ──────────── Result export to file ───────────────────────────────
+    # -- Entropy test (local est_core) ------------------------------------
+
+    def start_entropy_test(self, payload: dict) -> dict:
+        """Launch entropy test in a subprocess, returns immediately."""
+        return _start_entropy_test(payload)
+
+    def poll_entropy_test(self) -> dict:
+        """Non-blocking poll for log messages and completion status."""
+        return _poll_entropy_test()
+
+    def cleanup_entropy_test(self) -> None:
+        """Release all held memory from the last test run."""
+        return _cleanup_entropy_test()
+
+    # -- Result export to file --------------------------------------------
 
     def export_results_file(self, json_str: str, filepath: str) -> str:
         filepath = os.path.normpath(filepath)
@@ -125,7 +144,7 @@ class Api:
             raise
         return filepath
 
-    # ──────────── Native file picker ──────────────────────────────────
+    # -- Native file picker -----------------------------------------------
 
     def pick_file(self) -> str | None:
         """Open a native Windows file-open dialog and return the selected path."""
@@ -136,14 +155,32 @@ class Api:
             return _filedialog.askopenfilename(
                 title="选择文件",
                 filetypes=[
-                    ("所有支持的格式", "*.bin *.dat *.txt *.raw"),
+                    ("所有支持的格式", "*.bin *.dat *.raw"),
                     ("所有文件", "*.*"),
                 ],
             ) or None
         finally:
             root.destroy()
 
-    # ──────────── Window handle resolution ────────────────────────────
+    def save_file(self, default_name: str = "result.json") -> str | None:
+        """Open a native Windows save-file dialog and return the chosen path."""
+        root = _tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            return _filedialog.asksaveasfilename(
+                title="导出结果",
+                defaultextension=".json",
+                initialfile=default_name,
+                filetypes=[
+                    ("JSON 文件", "*.json"),
+                    ("所有文件", "*.*"),
+                ],
+            ) or None
+        finally:
+            root.destroy()
+
+    # -- Window handle resolution -----------------------------------------
 
     def _get_hwnd(self) -> int | None:
         hwnd = find_main_hwnd()

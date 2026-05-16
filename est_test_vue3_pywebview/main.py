@@ -52,7 +52,7 @@ if sys.platform == "win32":
             logger.debug("Could not set DPI awareness", exc_info=True)
 
 
-# ── Static file server ───────────────────────────────────────────────
+# -- Static file server ---------------------------------------------------
 
 
 class QuietHandler(http.server.SimpleHTTPRequestHandler):
@@ -105,7 +105,7 @@ def wait_for_server(url: str, timeout: float = 3.0) -> bool:
     return False
 
 
-# ── Window sizing ─────────────────────────────────────────────────────
+# -- Window sizing --------------------------------------------------------
 
 
 def get_adaptive_size() -> tuple[int, int]:
@@ -126,10 +126,16 @@ def get_resource_path(relative_path: str) -> str:
     return os.path.join(base_path, relative_path)
 
 
-# ── pywebview lifecycle callbacks ─────────────────────────────────────
+# -- pywebview lifecycle callbacks ----------------------------------------
 
 
-def on_start(window: object, *, actual_title: str, api: Api, tray: TrayManager | None) -> None:
+def on_start(
+    window: object,
+    *,
+    actual_title: str,
+    api: Api,
+    tray: TrayManager | None,
+) -> None:
     """Called after the webview window has fully loaded."""
     api.set_window(window, actual_title)
     if tray is not None:
@@ -161,7 +167,7 @@ def on_closed(tray: TrayManager | None) -> None:
         tray.stop()
 
 
-# ── Entry point ───────────────────────────────────────────────────────
+# -- Entry point ----------------------------------------------------------
 
 
 def main() -> None:

@@ -1,15 +1,14 @@
-
 <script setup>
 import { ref, onMounted } from 'vue'
 import EstMain from './components/EstMain.vue'
 import About from './components/About.vue'
 import { loadAllSettings } from './composables/useSettings.js'
 
-// ── State ────────────────────────────────────────────────────────
+// -- State ----------------------------------------------------------------
 
 const isAboutPanelOpen = ref(false)
 
-// ── Callbacks ────────────────────────────────────────────────────
+// -- Callbacks ------------------------------------------------------------
 
 /* Called from Python backend via evaluate_js when user clicks "About" in system tray */
 window.showAboutPanel = () => {
@@ -20,14 +19,13 @@ function closeAboutPanel() {
 	isAboutPanelOpen.value = false
 }
 
-// ── Lifecycle ────────────────────────────────────────────────────
+// -- Lifecycle ------------------------------------------------------------
 
 onMounted(() => { loadAllSettings() })
 </script>
 
 <template>
-	<div class="app"
-		tabindex="0">
+	<div class="app" tabindex="0">
 		<main class="app_viewer">
 			<EstMain />
 		</main>
@@ -46,7 +44,7 @@ onMounted(() => { loadAllSettings() })
 	user-select: none;
 }
 
-/* ---- App Shell ---- */
+/* -- App shell ---------------------------------------------------------- */
 
 .app {
 	position: relative;
@@ -71,7 +69,7 @@ onMounted(() => { loadAllSettings() })
 	background-color: transparent;
 }
 
-/* ---- About Panel Slide ---- */
+/* -- About panel slide -------------------------------------------------- */
 
 .about_panel_slide-enter-active {
 	will-change: opacity, transform;
@@ -106,6 +104,7 @@ onMounted(() => { loadAllSettings() })
 }
 
 @media (prefers-reduced-motion: reduce) {
+
 	.about_panel_slide-enter-active,
 	.about_panel_slide-leave-active {
 		transition: opacity 120ms linear;

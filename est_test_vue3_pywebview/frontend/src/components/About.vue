@@ -1,7 +1,7 @@
 <script setup>
 const emit = defineEmits(['close'])
 
-const closePanel = () => {
+function closePanel() {
 	emit('close')
 }
 </script>
@@ -10,7 +10,7 @@ const closePanel = () => {
 	<aside class="about_panel" role="dialog" aria-modal="true" aria-label="关于应用">
 		<header class="about_header">
 			<h2>关于应用</h2>
-			<button type="button" class="close_btn" @click="closePanel" aria-label="关闭关于窗口">×</button>
+			<button type="button" class="close_btn" aria-label="关闭关于窗口" @click="closePanel">&times;</button>
 		</header>
 
 		<section class="about_body">
@@ -58,8 +58,8 @@ const closePanel = () => {
 	box-shadow: var(--topbar-menu-shadow);
 	--wails-draggable: no-drag;
 	touch-action: none;
-	-webkit-backdrop-filter: blur(8px);
 	backdrop-filter: blur(8px);
+	-webkit-backdrop-filter: blur(8px);
 	backface-visibility: hidden;
 	transform: translateZ(0);
 	will-change: transform, opacity;

@@ -17,7 +17,8 @@ try:
 except ImportError:
     Image = None  # type: ignore[assignment,misc]
 
-# ── Win32 constants ──────────────────────────────────────────────────
+# -- Win32 constants ------------------------------------------------------
+
 WM_SETICON = 0x0080
 ICON_SMALL = 0
 ICON_BIG = 1
@@ -44,9 +45,7 @@ SWP_FLAGS = (
 user32 = ctypes.windll.user32  # type: ignore[attr-defined]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# HWND lookup utilities
-# ══════════════════════════════════════════════════════════════════════
+# -- HWND lookup utilities ------------------------------------------------
 
 
 def find_window_by_title(title: str) -> int | None:
@@ -92,9 +91,7 @@ def find_main_hwnd() -> int | None:
     return result[0]
 
 
-# ══════════════════════════════════════════════════════════════════════
-# DPI utilities
-# ══════════════════════════════════════════════════════════════════════
+# -- DPI utilities --------------------------------------------------------
 
 
 def get_system_dpi() -> int:
@@ -122,15 +119,15 @@ def get_physical_screen_size() -> tuple[int, int]:
     pixels regardless of the calling process's DPI-awareness level.
     """
     try:
-        w = user32.GetSystemMetrics(0)   # SM_CXSCREEN
-        h = user32.GetSystemMetrics(1)   # SM_CYSCREEN
+        w = user32.GetSystemMetrics(0)  # SM_CXSCREEN
+        h = user32.GetSystemMetrics(1)  # SM_CYSCREEN
         if w > 0 and h > 0:
             return w, h
     except Exception:
         pass
     try:
         hdc = ctypes.windll.gdi32.CreateDCW("DISPLAY", None, None, None)
-        w = ctypes.windll.gdi32.GetDeviceCaps(hdc, 8)   # HORZRES
+        w = ctypes.windll.gdi32.GetDeviceCaps(hdc, 8)  # HORZRES
         h = ctypes.windll.gdi32.GetDeviceCaps(hdc, 10)  # VERTRES
         ctypes.windll.gdi32.DeleteDC(hdc)
         if w > 0 and h > 0:
@@ -163,9 +160,7 @@ def _dpi_scale_icon_size(base_size: int, dpi: int, standards: tuple[int, ...]) -
     return size
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Window icon management
-# ══════════════════════════════════════════════════════════════════════
+# -- Window icon management -----------------------------------------------
 
 
 def set_titlebar_icon(hwnd: int, icon_path: str) -> None:
@@ -192,9 +187,30 @@ def set_taskbar_icon(hwnd: int, icon_path: str) -> None:
         user32.SetClassLongPtrW(hwnd, GCLP_HICON, hicon)
 
 
-# ══════════════════════════════════════════════════════════════════════
-# Dark-mode title bar & native background
-# ══════════════════════════════════════════════════════════════════════
+# -- Window geometry save / restore ---------------------------------------
+
+
+def get_window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
+    """Return (left, top, right, bottom) of *hwnd*, or *None* on failure."""
+    try:
+        rect = wintypes.RECT()
+        if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return rect.left, rect.top, rect.right, rect.bottom
+    except Exception:
+        pass
+    return None
+
+
+def restore_window_rect(hwnd: int, rect: tuple[int, int, int, int]) -> None:
+    """Move and resize *hwnd* to the saved (left, top, right, bottom)."""
+    left, top, right, bottom = rect
+    user32.SetWindowPos(
+        hwnd, 0, left, top, right - left, bottom - top,
+        0x0040,  # SWP_SHOWWINDOW
+    )
+
+
+# -- Dark-mode title bar & native background ------------------------------
 
 
 def set_window_dark_titlebar(hwnd: int, dark: bool) -> None:
@@ -212,7 +228,8 @@ def set_native_background(hwnd: int, dark: bool) -> None:
     color = 0x001E1E1E if dark else 0x00F3F3F3
     brush = ctypes.windll.gdi32.CreateSolidBrush(color)
     old = ctypes.windll.user32.SetClassLongPtrW(
-        hwnd, GCLP_HBRBACKGROUND, brush)
+        hwnd, GCLP_HBRBACKGROUND, brush
+    )
     if old:
         ctypes.windll.gdi32.DeleteObject(old)
     ctypes.windll.user32.InvalidateRect(hwnd, None, True)

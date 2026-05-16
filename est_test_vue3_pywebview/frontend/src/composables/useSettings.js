@@ -1,12 +1,12 @@
 import { ref } from 'vue'
 
-// ── State ──────────────────────────────────────────────────────────
+// -- State ----------------------------------------------------------------
 
 const theme = ref('dark')
 
-// ── Helpers ────────────────────────────────────────────────────────
+// -- Helpers --------------------------------------------------------------
 
-const hasApi = () => {
+function hasApi() {
 	return !!(window.pywebview && window.pywebview.api)
 }
 
@@ -30,7 +30,7 @@ async function loadAllSettings() {
 	}
 }
 
-// ── Translations ───────────────────────────────────────────────────
+// -- Translations ---------------------------------------------------------
 
 const translations = {
 	zh: {
@@ -73,9 +73,9 @@ const translations = {
 		'est.aborted': '测试已由用户中止。',
 		'est.err.noFile': '每次必须且只能选择 1 个文件。',
 		'est.err.noMode': '请选择一项测试模式（Restart / IID / Non-IID）。',
-		'est.err.hiRequired': 'Restart 测试需要填写有效的初始熵估值 H_I（≥ 0）。',
+		'est.err.hiRequired': 'Restart 测试需要填写有效的初始熵估值 H_I（>= 0）。',
 		'est.err.bpsRange': '符号位宽 bits_per_symbol 必须在 1~8 之间。',
-		'est.err.ubRange': 'use_bits 必须为 ≥ 1 的整数。',
+		'est.err.ubRange': 'use_bits 必须为 >= 1 的整数。',
 		'est.err.fetchFailed': '请求失败，请确认后端已启动并可访问',
 		'est.err.serverEmpty': '服务端返回空响应，请检查后端日志。',
 		'est.err.serverNonJson': '服务端返回了非 JSON 内容，请确认测试地址。',
@@ -86,14 +86,14 @@ const translations = {
 		'about.desc': '支持 Restart、IID、Non-IID 三种熵评估模式，基于 NIST SP800-90B 标准',
 		'about.tech': '技术栈：Vue 3 + pywebview + Python + FastAPI',
 		'about.standard': 'NIST SP800-90B（January 2018）',
-	}
+	},
 }
 
 function t(key) {
 	return translations.zh[key] || key
 }
 
-// ── Side effects ───────────────────────────────────────────────────
+// -- Side effects ---------------------------------------------------------
 
 /* Apply default theme immediately so CSS matches on first paint */
 applyTheme()
@@ -104,7 +104,7 @@ window.setThemeFromTray = (newTheme) => {
 	applyTheme()
 }
 
-// ── Exports ────────────────────────────────────────────────────────
+// -- Exports --------------------------------------------------------------
 
 export function useSettings() {
 	return { t }

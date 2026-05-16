@@ -23,6 +23,7 @@ except ImportError:
     HAS_TRAY = False
 
 from .config import APP_TITLE
+from .win32 import find_main_hwnd, get_window_rect, restore_window_rect
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# ── i18n strings for tray menu items ──────────────────────────────────
+# -- i18n strings for tray menu items -------------------------------------
 
 _TRAY_I18N: dict[str, dict[str, str]] = {
     "zh": {
@@ -55,8 +56,9 @@ class TrayManager:
         self._icon: pystray.Icon | None = None
         self._main_window: object | None = None
         self._window_visible = True
+        self._saved_rect: tuple[int, int, int, int] | None = None
 
-    # ── Public API ────────────────────────────────────────────────────
+    # -- Public API -------------------------------------------------------
 
     def set_window(self, window) -> None:
         """Store the pywebview window reference for toggle operations."""
@@ -75,7 +77,7 @@ class TrayManager:
             except Exception:
                 logger.exception("Failed to stop tray icon")
 
-    # ── Internal helpers ──────────────────────────────────────────────
+    # -- Internal helpers -------------------------------------------------
 
     def _t(self, key: str) -> str:
         return _TRAY_I18N["zh"].get(key, key)
@@ -107,9 +109,7 @@ class TrayManager:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            TrayMenuItem(
-                self._t("show"), self._on_show, default=False
-            ),
+            TrayMenuItem(self._t("show"), self._on_show, default=False),
             TrayMenuItem(self._t("hide"), self._on_hide),
             pystray.Menu.SEPARATOR,
             TrayMenuItem(self._t("about"), self._on_show_about),
@@ -130,13 +130,22 @@ class TrayManager:
             self._icon = self._build_icon()
             threading.Thread(target=self._icon.run, daemon=True).start()
 
-    # ── Menu callbacks ────────────────────────────────────────────────
+    # -- Menu callbacks ---------------------------------------------------
+
+    def _restore_window_rect(self) -> None:
+        """Restore window position/size via Win32 after show/restore."""
+        if self._saved_rect:
+            hwnd = find_main_hwnd()
+            if hwnd:
+                restore_window_rect(hwnd, self._saved_rect)
 
     def _on_show(self, icon=None, item=None) -> None:
         if self._main_window:
             try:
-                self._main_window.show()
-                self._main_window.restore()
+                if not self._window_visible:
+                    self._main_window.show()
+                    self._main_window.restore()
+                    self._restore_window_rect()
                 self._window_visible = True
             except Exception:
                 logger.exception("Failed to show/restore window")
@@ -144,6 +153,9 @@ class TrayManager:
     def _on_hide(self, icon=None, item=None) -> None:
         if self._main_window:
             try:
+                hwnd = find_main_hwnd()
+                if hwnd:
+                    self._saved_rect = get_window_rect(hwnd)
                 self._main_window.hide()
                 self._window_visible = False
             except Exception:
@@ -152,9 +164,12 @@ class TrayManager:
     def _on_show_about(self, icon=None, item=None) -> None:
         if self._main_window:
             try:
-                self._main_window.show()
-                self._main_window.restore()
+                if not self._window_visible:
+                    self._main_window.show()
+                    self._main_window.restore()
+                    self._restore_window_rect()
                 self._main_window.evaluate_js("showAboutPanel()")
+                self._window_visible = True
             except Exception:
                 logger.exception("Failed to show about panel")
 

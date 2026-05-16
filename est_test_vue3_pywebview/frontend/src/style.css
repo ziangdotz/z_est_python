@@ -1,3 +1,13 @@
+/*
+ * Global design tokens & base styles
+ * NIST SP800-90B Entropy Assessment Tool
+ *
+ * Dark theme is the default (:root).
+ * Light theme overrides via :root[data-theme="light"].
+ */
+
+/* -- Dark theme (default) ---------------------------------------------- */
+
 :root,
 :root[data-theme="dark"] {
 	--app-bg: #262626;
@@ -86,6 +96,8 @@
 	--rt-scroll-track-transparent: transparent;
 	--rt-open-file-hint-text: rgba(214, 214, 214, 0.78);
 }
+
+/* -- Light theme ------------------------------------------------------- */
 
 :root[data-theme="light"] {
 	--app-bg: #eceef1;
@@ -177,6 +189,8 @@
 
 	--rt-open-file-hint-text: rgba(118, 123, 132, 0.78);
 }
+
+/* -- Base reset -------------------------------------------------------- */
 
 html {
 	background-color: var(--app-bg);
