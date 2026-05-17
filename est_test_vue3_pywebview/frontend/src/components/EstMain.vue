@@ -4,47 +4,11 @@ import { useSettings } from '../composables/useSettings.js'
 
 const { t } = useSettings()
 
-// -- State ----------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Constants
+// ---------------------------------------------------------------------------
 
-const testInputParams = reactive({
-	inputDataPath: 'xxx\\data_0',
-})
-
-const testMode = ref('restart')
-const bitsPerSymbol = ref(8)
-const hiValue = ref('')
-const useBitsValue = ref('')
-const verbose = ref(false)
-const isRunning = ref(false)
-
-let pollTimerId = null
-
-const runtimeLogText = ref('')
-const resultData = ref(null)
-const activeResultTab = ref('summary')
-const resultJson = ref('')
-
-const progressTrackRef = ref(null)
-
-// -- Computed --------------------------------------------------------------
-
-const isRestart = computed(() => testMode.value === 'restart')
-const isNonIID = computed(() => testMode.value === 'noniid')
-
-const hasInputDataPath = computed(() => testInputParams.inputDataPath.trim().length > 0)
-const hasRuntimeLogText = computed(() => runtimeLogText.value.trim().length > 0)
-const hasTableResult = computed(() => detailTableRows.value.length > 0)
-
-const testResult = computed(() => {
-	const d = resultData.value
-	if (!d) return null
-	if (d.Restart_Test) return { mode: 'restart', raw: d.Restart_Test }
-	if (d.IID_Test) return { mode: 'iid', raw: d.IID_Test }
-	if (d.Non_IID_Test) return { mode: 'noniid', raw: d.Non_IID_Test }
-	return null
-})
-
-const estimatorNames = {
+const ESTIMATOR_NAMES = {
 	MCV: 'Most Common Value',
 	Collision: 'Collision',
 	Markov: 'Markov',
@@ -56,6 +20,63 @@ const estimatorNames = {
 	MultiMMC: 'MultiMMC Prediction',
 	LZ78Y: 'LZ78Y Prediction',
 }
+
+const ALLOWED_EXTENSIONS = ['bin', 'dat', 'raw']
+
+// ---------------------------------------------------------------------------
+//  State — form inputs
+// ---------------------------------------------------------------------------
+
+const testInputParams = reactive({ inputDataPath: 'xxx\\data_0' })
+const testMode = ref('restart')
+const bitsPerSymbol = ref(8)
+const hiValue = ref('')
+const useBitsValue = ref('')
+const verbose = ref(false)
+
+// ---------------------------------------------------------------------------
+//  State — runtime
+// ---------------------------------------------------------------------------
+
+const isRunning = ref(false)
+const progressValue = ref(0)
+const runtimeLogText = ref('')
+const resultData = ref(null)
+const resultJson = ref('')
+const activeResultTab = ref('summary')
+
+let pollTimerId = null
+let pollGeneration = 0
+
+// ---------------------------------------------------------------------------
+//  Computed — mode queries
+// ---------------------------------------------------------------------------
+
+const isRestart = computed(() => testMode.value === 'restart')
+const isNonIID = computed(() => testMode.value === 'noniid')
+
+// ---------------------------------------------------------------------------
+//  Computed — UI state
+// ---------------------------------------------------------------------------
+
+const hasInputDataPath = computed(() => testInputParams.inputDataPath.trim().length > 0)
+const hasRuntimeLogText = computed(() => runtimeLogText.value.trim().length > 0)
+const hasTableResult = computed(() => detailTableRows.value.length > 0)
+const startBtnText = computed(() => (isRunning.value ? '停止测试' : '开始测试'))
+const progressDisplay = computed(() => `${Math.round(progressValue.value * 100)} %`)
+
+// ---------------------------------------------------------------------------
+//  Computed — result transforms
+// ---------------------------------------------------------------------------
+
+const testResult = computed(() => {
+	const d = resultData.value
+	if (!d) return null
+	if (d.Restart_Test) return { mode: 'restart', raw: d.Restart_Test }
+	if (d.IID_Test) return { mode: 'iid', raw: d.IID_Test }
+	if (d.Non_IID_Test) return { mode: 'noniid', raw: d.Non_IID_Test }
+	return null
+})
 
 const detailTableRows = computed(() => {
 	const tr = testResult.value
@@ -80,7 +101,7 @@ const detailTableRows = computed(() => {
 		return Object.entries(tr.raw.details).map(([key, val]) => ({
 			key,
 			name: key,
-			english: estimatorNames[key] || key,
+			english: ESTIMATOR_NAMES[key] || key,
 			value: val,
 		}))
 	}
@@ -88,34 +109,34 @@ const detailTableRows = computed(() => {
 	return [{ key: 'min_entropy', name: 'H_min', english: 'min_entropy', value: tr.raw.min_entropy }]
 })
 
-const detailTableHeading = computed(() => {
-	const mode = testResult.value?.mode
-	if (mode === 'restart') return 'Restart 结果详情'
-	if (mode === 'iid') return 'IID 结果详情'
-	return 'Non-IID 估计器详情'
-})
+const detailTableMinValue = computed(() =>
+	Math.min(...detailTableRows.value.map((r) => Number(r.value)))
+)
 
-const detailTableValueHeader = computed(() => {
-	const mode = testResult.value?.mode
-	return mode === 'noniid' ? 'min_entropy' : '值'
-})
+const detailTableValueHeader = computed(() =>
+	testResult.value?.mode === 'noniid' ? 'min_entropy' : '值'
+)
 
-const progressDisplay = computed(() => '0 %')
-const startBtnText = computed(() => (isRunning.value ? '停止测试' : '开始测试'))
+// ---------------------------------------------------------------------------
+//  Helpers — formatting
+// ---------------------------------------------------------------------------
 
-// -- Helpers ---------------------------------------------------------------
-
-const formatNum = (val) => {
+function formatNum(val) {
 	if (val === null || val === undefined) return '-'
 	const num = Number(val)
 	return Number.isFinite(num) ? num.toFixed(4) : String(val)
 }
 
-const formatMode = (mode) => {
+function formatCellDisplay(val) {
+	if (typeof val === 'boolean') return val ? '通过' : '未通过'
+	return formatNum(val)
+}
+
+function formatMode(mode) {
 	return { restart: 'RESTART', iid: 'IID', noniid: 'NON-IID' }[mode] || '-'
 }
 
-const formatDurationMs = (elapsedMs) => {
+function formatDurationMs(elapsedMs) {
 	const ms = Math.max(0, Number(elapsedMs) || 0)
 	if (ms < 1000) return `${ms.toFixed(1)} ms`
 	const totalSeconds = ms / 1000
@@ -125,27 +146,64 @@ const formatDurationMs = (elapsedMs) => {
 	return `${minutes} min ${seconds.toFixed(3)} s`
 }
 
-const appendRuntimeLog = (message) => {
+// ---------------------------------------------------------------------------
+//  Helpers — runtime log
+// ---------------------------------------------------------------------------
+
+function appendRuntimeLog(message) {
 	const line = String(message ?? '').trimEnd()
 	if (!line) return
-	if (runtimeLogText.value.length === 0) {
-		runtimeLogText.value = line
-		return
-	}
-	runtimeLogText.value = `${runtimeLogText.value}\n${line}`
+	runtimeLogText.value = runtimeLogText.value.length === 0
+		? line
+		: `${runtimeLogText.value}\n${line}`
 }
 
-const clearInputDataPath = () => { testInputParams.inputDataPath = '' }
-const clearRuntimeLogText = () => { runtimeLogText.value = '' }
+function clearRuntimeLogText() {
+	runtimeLogText.value = ''
+}
 
-const stopPolling = () => {
+// ---------------------------------------------------------------------------
+//  Helpers — polling
+// ---------------------------------------------------------------------------
+
+function stopPolling() {
 	if (pollTimerId !== null) {
 		clearInterval(pollTimerId)
 		pollTimerId = null
 	}
 }
 
-// -- File handling ---------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Validation
+// ---------------------------------------------------------------------------
+
+function validate() {
+	const filePath = testInputParams.inputDataPath.trim()
+	if (!filePath) return t('est.err.noFile')
+
+	const ext = filePath.split('.').pop()?.toLowerCase()
+	if (!ALLOWED_EXTENSIONS.includes(ext)) return '不支持的文件格式，请选择 .bin / .dat / .raw 文件'
+	if (!testMode.value) return t('est.err.noMode')
+
+	if (isRestart.value) {
+		const hi = parseFloat(hiValue.value)
+		if (isNaN(hi) || hi < 0) return t('est.err.hiRequired')
+	}
+
+	const bps = parseInt(bitsPerSymbol.value, 10)
+	if (isNaN(bps) || bps < 1 || bps > 8) return t('est.err.bpsRange')
+
+	if (isNonIID.value && useBitsValue.value) {
+		const ub = parseInt(useBitsValue.value, 10)
+		if (isNaN(ub) || ub < 1) return t('est.err.ubRange')
+	}
+
+	return null
+}
+
+// ---------------------------------------------------------------------------
+//  Event handlers — file
+// ---------------------------------------------------------------------------
 
 async function handlePickFile() {
 	try {
@@ -159,27 +217,13 @@ async function handlePickFile() {
 	}
 }
 
-// -- Validation ------------------------------------------------------------
-
-function validate() {
-	if (!testInputParams.inputDataPath.trim()) return t('est.err.noFile')
-	const ext = testInputParams.inputDataPath.trim().split('.').pop()?.toLowerCase()
-	if (!['bin', 'dat', 'raw'].includes(ext)) return '不支持的文件格式，请选择 .bin / .dat / .raw 文件'
-	if (!testMode.value) return t('est.err.noMode')
-	if (isRestart.value) {
-		const hi = parseFloat(hiValue.value)
-		if (isNaN(hi) || hi < 0) return t('est.err.hiRequired')
-	}
-	const bps = parseInt(bitsPerSymbol.value, 10)
-	if (isNaN(bps) || bps < 1 || bps > 8) return t('est.err.bpsRange')
-	if (isNonIID.value && useBitsValue.value) {
-		const ub = parseInt(useBitsValue.value, 10)
-		if (isNaN(ub) || ub < 1) return t('est.err.ubRange')
-	}
-	return null
+function clearInputDataPath() {
+	testInputParams.inputDataPath = ''
 }
 
-// -- Mode switch -----------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Event handlers — mode & export
+// ---------------------------------------------------------------------------
 
 function onModeChange() {
 	hiValue.value = ''
@@ -188,7 +232,14 @@ function onModeChange() {
 	resultJson.value = ''
 }
 
-// -- Result export ---------------------------------------------------------
+function buildExportFilename() {
+	const rawPath = testInputParams.inputDataPath.trim()
+	const basename = rawPath.replace(/\\/g, '/').split('/').pop() || 'result'
+	const name = basename.replace(/\.[^.]+$/, '')
+	const parts = [name, testMode.value, `${bitsPerSymbol.value}bps`]
+	if (isNonIID.value && useBitsValue.value) parts.push(`${useBitsValue.value}bit`)
+	return parts.join('_') + '.json'
+}
 
 async function exportResults() {
 	if (!resultJson.value) return
@@ -197,7 +248,8 @@ async function exportResults() {
 			appendRuntimeLog('[ERROR] pywebview API 不可用')
 			return
 		}
-		const path = await window.pywebview.api.save_file('entropy_result.json')
+		const filename = buildExportFilename()
+		const path = await window.pywebview.api.save_file(filename)
 		if (!path) return
 		await window.pywebview.api.export_results_file(resultJson.value, path)
 		appendRuntimeLog('[INFO] 结果已导出: ' + path)
@@ -206,16 +258,18 @@ async function exportResults() {
 	}
 }
 
-// -- Test execution --------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Event handlers — test execution
+// ---------------------------------------------------------------------------
 
 async function handleStartTest() {
 	if (isRunning.value) {
 		stopPolling()
+		pollGeneration++
 		isRunning.value = false
+		progressValue.value = 0
 		appendRuntimeLog('[INFO] 已停止测试')
-		try {
-			window.pywebview?.api?.cleanup_entropy_test?.()
-		} catch (_) { /* best-effort */ }
+		try { window.pywebview?.api?.cleanup_entropy_test?.() } catch (_) { /* best-effort */ }
 		return
 	}
 
@@ -227,6 +281,7 @@ async function handleStartTest() {
 
 	resultData.value = null
 	resultJson.value = ''
+	progressValue.value = 0
 
 	try {
 		if (!window.pywebview?.api) {
@@ -262,7 +317,9 @@ async function handleStartTest() {
 
 	pollTimerId = setInterval(async () => {
 		try {
+			const gen = pollGeneration
 			const poll = await window.pywebview.api.poll_entropy_test()
+			if (gen !== pollGeneration) return
 
 			for (const msg of poll.logs) {
 				if (msg.type === 'log') {
@@ -276,12 +333,15 @@ async function handleStartTest() {
 				}
 			}
 
+			if (poll.progress != null) {
+				progressValue.value = poll.progress
+			}
+
 			if (!poll.running) {
 				stopPolling()
 				const elapsedMs = performance.now() - requestStartPerf
 				appendRuntimeLog(`[INFO] 总测试时间: ${formatDurationMs(elapsedMs)}`)
 				isRunning.value = false
-				// Tell backend to release all held memory (queue, result, datasets)
 				window.pywebview?.api?.cleanup_entropy_test?.()
 			}
 		} catch (e) {
@@ -292,7 +352,9 @@ async function handleStartTest() {
 	}, 200)
 }
 
-// -- Lifecycle -------------------------------------------------------------
+// ---------------------------------------------------------------------------
+//  Lifecycle
+// ---------------------------------------------------------------------------
 
 onMounted(async () => {
 	try {
@@ -330,26 +392,27 @@ onBeforeUnmount(() => {
 					<table class="detail_table">
 						<thead>
 							<tr>
+								<th>序号</th>
 								<th>估计器</th>
-								<th>英文名</th>
+								<th>全称</th>
 								<th>{{ detailTableValueHeader }}</th>
 							</tr>
 						</thead>
 						<tbody>
-							<tr v-for="row in detailTableRows" :key="row.key"
-								:class="{ 'row-min': row.value === Math.min(...detailTableRows.map(r => Number(r.value))) }">
+							<tr v-for="(row, index) in detailTableRows" :key="row.key"
+								:class="{ 'row-min': row.value === detailTableMinValue }">
+								<td>{{ index + 1 }}</td>
 								<td>{{ row.name }}</td>
 								<td>{{ row.english }}</td>
-								<td>{{ typeof row.value === 'boolean' ? (row.value ? '通过' : '未通过') :
-									formatNum(row.value) }}</td>
+								<td>{{ formatCellDisplay(row.value) }}</td>
 							</tr>
 						</tbody>
 					</table>
 				</div>
 			</div>
 
-			<div v-if="resultJson" class="json_output_row">
-				<div v-show="activeResultTab === 'json'" class="json_output_wrap">
+			<div v-if="resultJson && activeResultTab === 'json'" class="json_output_row">
+				<div class="json_output_wrap">
 					<pre>{{ resultJson }}</pre>
 				</div>
 			</div>
@@ -412,7 +475,7 @@ onBeforeUnmount(() => {
 
 			<!-- Progress + Start button -->
 			<div class="action_progress_row">
-				<div ref="progressTrackRef" class="progress_track">
+				<div class="progress_track" :style="{ '--rt-progress-width': `${progressValue * 100}%` }">
 					<div class="progress_fill" />
 					<span>{{ progressDisplay }}</span>
 				</div>
@@ -543,18 +606,10 @@ onBeforeUnmount(() => {
 
 .detail_section {
 	flex: 1 1 0;
-	min-height: 0;
+	height: 0;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
-}
-
-.detail_section h3 {
-	margin: 0 0 6px;
-	font-size: clamp(12px, 0.85vw, 14px);
-	font-weight: 700;
-	color: var(--rt-title-dot-start);
-	flex-shrink: 0;
 }
 
 .detail_table_wrap {
@@ -1138,8 +1193,9 @@ select option:hover {
 /* -- JSON output ------------------------------------------------------- */
 
 .json_output_row {
-	flex-shrink: 0;
-	max-height: 200px;
+	flex: 1 1 0;
+	height: 0;
+	min-height: 0;
 }
 
 .json_output_wrap {
