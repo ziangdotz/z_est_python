@@ -275,9 +275,9 @@ function buildExportFilename() {
 	const rawPath = testInputParams.inputDataPath.trim()
 	const basename = rawPath.replace(/\\/g, '/').split('/').pop() || 'result'
 	const name = basename.replace(/\.[^.]+$/, '')
-	const parts = [name, testMode.value, `${bitsPerSymbol.value}bps`]
-	if (isNonIID.value && useBitsValue.value) parts.push(`${useBitsValue.value}bit`)
-	return parts.join('_') + '.json'
+	const hi = hiValue.value || '0'
+	const ub = useBitsValue.value || '0'
+	return `${name}_${testMode.value}_${bitsPerSymbol.value}bps-${hi}h_i-${ub}use_bits.json`
 }
 
 async function exportResults() {
@@ -861,8 +861,8 @@ onBeforeUnmount(() => {
 }
 
 .verbose_toggle:hover {
-	border-color: var(--focus-border);
-	background: rgba(79, 142, 247, 0.06);
+	border-color: var(--rt-start-btn-border);
+	background: linear-gradient(180deg, rgba(185, 243, 197, 0.08), rgba(133, 224, 156, 0.08));
 }
 
 .verbose_toggle input[type="checkbox"] {
@@ -884,7 +884,7 @@ onBeforeUnmount(() => {
 }
 
 .verbose_toggle input[type="checkbox"]:checked+.verbose_toggle_track {
-	background: var(--focus-border);
+	background: linear-gradient(180deg, var(--rt-start-btn-bg-start), var(--rt-start-btn-bg-end));
 }
 
 .verbose_toggle_thumb {
