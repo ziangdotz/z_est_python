@@ -163,6 +163,45 @@ function clearRuntimeLogText() {
 }
 
 // ---------------------------------------------------------------------------
+//  Helpers — global tooltip
+// ---------------------------------------------------------------------------
+
+let tooltipEl = null
+
+function showTooltip(e, text) {
+	if (!text) return
+	hideTooltip()
+	tooltipEl = document.createElement('div')
+	tooltipEl.className = 'est-tooltip'
+	tooltipEl.textContent = text
+	document.body.appendChild(tooltipEl)
+
+	const rect = e.currentTarget.getBoundingClientRect()
+	const gap = 8
+	const tipW = tooltipEl.offsetWidth
+	const tipH = tooltipEl.offsetHeight
+	const vw = window.innerWidth
+	const vh = window.innerHeight
+
+	let top = rect.bottom + gap
+	let left = rect.left + rect.width / 2 - tipW / 2
+
+	if (top + tipH > vh - 4) top = rect.top - gap - tipH
+	if (left + tipW > vw - 4) left = vw - tipW - 4
+	if (left < 4) left = 4
+
+	tooltipEl.style.top = `${top}px`
+	tooltipEl.style.left = `${left}px`
+}
+
+function hideTooltip() {
+	if (tooltipEl) {
+		tooltipEl.remove()
+		tooltipEl = null
+	}
+}
+
+// ---------------------------------------------------------------------------
 //  Helpers — polling
 // ---------------------------------------------------------------------------
 
@@ -368,6 +407,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
 	stopPolling()
+	hideTooltip()
 })
 </script>
 
@@ -430,7 +470,9 @@ onBeforeUnmount(() => {
 						<option value="noniid">Non-IID</option>
 					</select>
 				</div>
-				<label class="verbose_toggle" :title="t('est.verbose.desc') || '启用详细输出，显示每个估计器的计算过程'">
+				<label class="verbose_toggle"
+					@mouseenter="showTooltip($event, t('est.verbose.desc') || '启用详细输出，显示每个估计器的计算过程')"
+					@mouseleave="hideTooltip">
 					<input v-model="verbose" type="checkbox" />
 					<span class="verbose_toggle_track">
 						<span class="verbose_toggle_thumb" />
@@ -442,23 +484,26 @@ onBeforeUnmount(() => {
 			<!-- Parameters: bps / h_i / use_bits -->
 			<div class="threshold_row">
 				<div class="field_pair">
-					<label>
+					<label
+						@mouseenter="showTooltip($event, t('est.bps.desc'))"
+						@mouseleave="hideTooltip">
 						bps
-						<span class="param_tooltip">{{ t('est.bps.desc') }}</span>
 					</label>
 					<input v-model.number="bitsPerSymbol" type="number" :min="1" :max="8" step="1" />
 				</div>
 				<div class="field_pair" :class="{ disabled: !isRestart }">
-					<label>
+					<label
+						@mouseenter="showTooltip($event, t('est.hi.desc') + ' Restart 模式下必填。')"
+						@mouseleave="hideTooltip">
 						h_i
-						<span class="param_tooltip">{{ t('est.hi.desc') }} Restart 模式下必填。</span>
 					</label>
 					<input v-model="hiValue" type="number" min="0" step="0.01" :disabled="!isRestart" />
 				</div>
 				<div class="field_pair" :class="{ disabled: !isNonIID }">
-					<label>
+					<label
+						@mouseenter="showTooltip($event, t('est.ub.desc') + ' Non-IID 模式下可选。')"
+						@mouseleave="hideTooltip">
 						use_bits
-						<span class="param_tooltip">{{ t('est.ub.desc') }} Non-IID 模式下可选。</span>
 					</label>
 					<input v-model="useBitsValue" type="number" min="1" step="1" :disabled="!isNonIID" />
 				</div>
@@ -743,7 +788,6 @@ onBeforeUnmount(() => {
 	flex: 0 0 auto;
 	align-items: center;
 	justify-content: center;
-	position: relative;
 	width: var(--pair-label-width);
 	height: 30px;
 	min-width: 0;
@@ -758,33 +802,7 @@ onBeforeUnmount(() => {
 	text-align: center;
 }
 
-/* -- Floating tooltip --------------------------------------------------- */
-
-.field_pair label .param_tooltip {
-	display: none;
-	position: absolute;
-	top: calc(100% + 6px);
-	left: 0;
-	z-index: 20;
-	width: max-content;
-	max-width: 260px;
-	padding: 8px 10px;
-	border: 1px solid var(--panel-border);
-	border-radius: 8px;
-	background: var(--rt-panel-bg-solid);
-	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
-	color: var(--rt-meta-text);
-	font-size: 12px;
-	font-weight: 400;
-	line-height: 1.5;
-	text-align: left;
-	white-space: normal;
-	pointer-events: none;
-}
-
-.field_pair label:hover .param_tooltip {
-	display: block;
-}
+/* (tooltip styles are global — see non-scoped <style> block below) */
 
 /* -- Input & select primitives ------------------------------------------ */
 
@@ -1265,5 +1283,27 @@ select option:hover {
 	.terminal_output_box {
 		min-height: 96px;
 	}
+}
+</style>
+
+<!-- Global (non-scoped) styles for the body-appended tooltip -->
+<style>
+.est-tooltip {
+	position: fixed;
+	z-index: 9999;
+	width: max-content;
+	max-width: 260px;
+	padding: 8px 10px;
+	border: 1px solid var(--panel-border, #2a2d35);
+	border-radius: 8px;
+	background: var(--rt-panel-bg-solid, #1e2028);
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+	color: var(--rt-meta-text, #b0b8c8);
+	font-size: 12px;
+	font-weight: 400;
+	line-height: 1.5;
+	text-align: left;
+	white-space: normal;
+	pointer-events: none;
 }
 </style>
