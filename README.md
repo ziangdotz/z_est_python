@@ -11,7 +11,20 @@ cd est_test
 python est_test.py
 ```
 
-#### **2. est_test_vue3_pywebview**
+#### **2. est_test_nist_cpp_recode**
+
+- 基于 NIST SP800-90B（January 2018） 进行熵评估
+
+进入目录
+```
+cd est_test_nist_cpp_recode
+```
+运行
+```
+python est_test_nist_cpp_recode.py
+```
+
+#### **3. est_test_vue3_pywebview**
 
 进入目录
 ```
@@ -22,7 +35,7 @@ cd est_test_vue3_pywebview
 python main.py --dev
 ```
 
-#### **3. est_web_fastapi 服务启动**
+#### **4. est_web_fastapi 服务启动**
 
 - 基于 Fastapi 的熵评估 Web 服务
 
