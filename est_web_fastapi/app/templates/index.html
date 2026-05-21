@@ -241,6 +241,25 @@
 			animation: fadeIn 220ms ease-out;
 		}
 
+		.backend-select {
+			width: 100%;
+			padding: 8px 10px;
+			border: 1px solid var(--line);
+			border-radius: 8px;
+			background: #fff;
+			font-family: var(--font-main);
+			font-size: 14px;
+			color: var(--text);
+			cursor: pointer;
+			outline: none;
+			transition: border-color 150ms ease;
+			appearance: auto;
+		}
+
+		.backend-select:focus {
+			border-color: var(--accent);
+		}
+
 		.status {
 			margin-top: 12px;
 			display: none;
@@ -514,7 +533,7 @@
 		<section class="hero">
 			<div>
 				<h1>NIST SP800-90B 熵评估 Web 控制台 <span class="version">V1.0.1</span></h1>
-				<p>支持 Restart、IID、Non-IID 三种熵评估模式</p>
+				<p>针对 密码学院实验室版本 和 NIST开源C++代码重写版本，支持 Restart、IID、Non-IID 三种熵评估模式</p>
 				<p>技术栈：HTML + CSS + JavaScript + FastAPI + Python</p>
 			</div>
 			<div class="chip">NIST SP800-90B（January 2018）</div>
@@ -529,6 +548,12 @@
 					<div class="api-row">
 						<input id="apiOriginInput" type="text" placeholder="测试地址，例如 http://127.0.0.1:8888">
 						<button class="btn ghost" id="saveApiBtn" type="button">更新地址</button>
+					</div>
+					<div class="mode-row" style="margin-top: 16px;">
+						<select id="backendType" class="backend-select">
+							<option value="python" selected>密码学院实验室版本</option>
+							<option value="cpp">NIST开源C++代码重写版本</option>
+						</select>
 					</div>
 					<div class="mode-row" id="testTypeRow">
 						<label><input type="radio" name="testMode" value="restart" id="testRestart"
@@ -550,7 +575,9 @@
 			<!-- Right: Parameter configuration -->
 			<article class="panel">
 				<h2>参数配置</h2>
-				<div class="options" id="optionsRoot">
+
+				<!-- Lab version panel -->
+				<div class="options" id="optionsLab">
 					<!-- Common: bits_per_symbol -->
 					<div class="option">
 						<label><input type="checkbox" id="bitsPerSymbolEnable" checked>bits_per_symbol（符号位宽）</label>
@@ -595,6 +622,67 @@
 						<div class="option-desc">启用后将在结果中输出更详细的测试过程信息</div>
 					</div>
 				</div>
+
+				<!-- NIST C++ recode version panel -->
+				<div class="options" id="optionsNist" style="display:none;">
+					<!-- Common: bits_per_symbol (default 0 = auto-detect) -->
+					<div class="option">
+						<label><input type="checkbox" id="nistBitsPerSymbolEnable" checked>bits_per_symbol（符号位宽）</label>
+						<div class="option-desc">每个采样值使用的比特数，0 表示自动检测，默认 0</div>
+						<div class="params show single" id="nistBitsPerSymbolParams">
+							<div class="param-field">
+								<span class="param-label">bits</span>
+								<input type="number" id="nistBitsPerSymbol" value="0" min="0" max="16" step="1">
+							</div>
+						</div>
+					</div>
+
+					<!-- Restart only: H_I -->
+					<div class="option disabled" id="nistOptionHI">
+						<label><input type="checkbox" id="nistHiEnable">H_I（初始熵估值）<span class="param-label">Restart
+								专用</span></label>
+						<div class="option-desc">Restart 测试需要验证的目标初始最小熵估计值，执行 Restart 时必须填写</div>
+						<div class="params single" id="nistHiParams">
+							<div class="param-field">
+								<span class="param-label">H_I</span>
+								<input type="number" id="nistHiValue" value="" min="0" step="0.01" placeholder="例如 7.99">
+							</div>
+						</div>
+					</div>
+
+					<!-- Restart only: run_iid_validation -->
+					<div class="option disabled" id="nistOptionIidValidation">
+						<label><input type="checkbox" id="nistIidValidationEnable">run_iid_validation（IID 验证）<span
+								class="param-label">Restart 专用</span></label>
+						<div class="option-desc">Restart 测试通过后是否额外运行 IID 验证测试</div>
+					</div>
+
+					<!-- IID only: initial -->
+					<div class="option disabled" id="nistOptionInitial">
+						<label><input type="checkbox" id="nistInitialEnable" checked>initial（初始熵估计）<span
+								class="param-label">IID 专用</span></label>
+						<div class="option-desc">选择计算初始熵估计（默认）或条件化数据集熵估计</div>
+					</div>
+
+					<!-- IID only: all_bits -->
+					<div class="option disabled" id="nistOptionAllBits">
+						<label><input type="checkbox" id="nistAllBitsEnable" checked>all_bits（使用全部 bit）<span
+								class="param-label">IID 专用</span></label>
+						<div class="option-desc">H_bitstring 计算时使用全部 bit（默认），否则截断到前 100 万 bit</div>
+					</div>
+
+					<!-- Common: verbose -->
+					<div class="option">
+						<label><input type="checkbox" id="nistVerboseEnable" checked>verbose（详细输出）</label>
+						<div class="option-desc">启用后将在结果中输出更详细的测试过程信息（可多次点击增加详细级别）</div>
+						<div class="params show single" id="nistVerboseParams">
+							<div class="param-field">
+								<span class="param-label">level</span>
+								<input type="number" id="nistVerboseLevel" value="1" min="1" max="3" step="1">
+							</div>
+						</div>
+					</div>
+				</div>
 			</article>
 		</section>
 
@@ -636,6 +724,7 @@
 		const DEFAULT_API_ORIGIN = "http://127.0.0.1:8888";
 		const API_ORIGIN_STORAGE_KEY = "est_api_origin";
 		const API_PATH_EST = "/api/v1/entropy/est";
+		const API_PATH_EST_NIST_CPP_RECODE ="/api/v1/entropy/est_nist_cpp_recode";
 
 		/* ===== Elements ===== */
 
@@ -660,6 +749,10 @@
 			testRestart: document.getElementById("testRestart"),
 			testIID: document.getElementById("testIID"),
 			testNonIID: document.getElementById("testNonIID"),
+			backendType: document.getElementById("backendType"),
+			// Lab panel elements
+			optionsLab: document.getElementById("optionsLab"),
+			optionsNist: document.getElementById("optionsNist"),
 			optionHI: document.getElementById("optionHI"),
 			optionUseBits: document.getElementById("optionUseBits"),
 			hiEnable: document.getElementById("hiEnable"),
@@ -668,7 +761,22 @@
 			verboseEnable: document.getElementById("verboseEnable"),
 			bitsPerSymbol: document.getElementById("bitsPerSymbol"),
 			hiValue: document.getElementById("hiValue"),
-			useBitsValue: document.getElementById("useBitsValue")
+			useBitsValue: document.getElementById("useBitsValue"),
+			// NIST panel elements
+			nistOptionHI: document.getElementById("nistOptionHI"),
+			nistOptionIidValidation: document.getElementById("nistOptionIidValidation"),
+			nistOptionInitial: document.getElementById("nistOptionInitial"),
+			nistOptionAllBits: document.getElementById("nistOptionAllBits"),
+			nistHiEnable: document.getElementById("nistHiEnable"),
+			nistIidValidationEnable: document.getElementById("nistIidValidationEnable"),
+			nistInitialEnable: document.getElementById("nistInitialEnable"),
+			nistAllBitsEnable: document.getElementById("nistAllBitsEnable"),
+			nistBitsPerSymbolEnable: document.getElementById("nistBitsPerSymbolEnable"),
+			nistVerboseEnable: document.getElementById("nistVerboseEnable"),
+			nistBitsPerSymbol: document.getElementById("nistBitsPerSymbol"),
+			nistHiValue: document.getElementById("nistHiValue"),
+			nistVerboseLevel: document.getElementById("nistVerboseLevel"),
+			nistVerboseParams: document.getElementById("nistVerboseParams")
 		};
 
 		/* ===== Utility functions ===== */
@@ -723,24 +831,39 @@
 			return checked ? checked.value : null;
 		}
 
+		function getSelectedBackend() {
+			return els.backendType ? els.backendType.value : "python";
+		}
+
 		function syncTestTypeUI() {
 			const mode = getSelectedMode();
+			const backend = getSelectedBackend();
 			const isRestart = mode === "restart";
 			const isNonIID = mode === "noniid";
+			const isIID = mode === "iid";
 
-			// H_I: only enabled when Restart is selected
+			// Lab panel sync
 			els.optionHI.classList.toggle("disabled", !isRestart);
 			els.hiEnable.checked = isRestart;
 			els.optionHI.querySelector(".params").classList.toggle("show", isRestart);
-
-			// use_bits: only enabled when Non-IID is selected
 			els.optionUseBits.classList.toggle("disabled", !isNonIID);
 			els.useBitsEnable.checked = isNonIID;
 			els.optionUseBits.querySelector(".params").classList.toggle("show", isNonIID);
 
-			// Reset parameter values to defaults
+			// NIST panel sync
+			els.nistOptionHI.classList.toggle("disabled", !isRestart);
+			els.nistHiEnable.checked = isRestart;
+			els.nistOptionHI.querySelector(".params").classList.toggle("show", isRestart);
+			els.nistOptionIidValidation.classList.toggle("disabled", !isRestart);
+			els.nistOptionInitial.classList.toggle("disabled", !isIID);
+			els.nistInitialEnable.checked = isIID;
+			els.nistOptionAllBits.classList.toggle("disabled", !isIID);
+			els.nistAllBitsEnable.checked = isIID;
+
+			// Reset parameter values
 			els.hiValue.value = "";
 			els.useBitsValue.value = "";
+			els.nistHiValue.value = "";
 
 			// Clear file selection, metadata, status, and results
 			els.fileInput.value = "";
@@ -753,10 +876,22 @@
 			els.jsonContent.textContent = "";
 		}
 
+		function syncBackendUI() {
+			const backend = getSelectedBackend();
+			const isNist = backend === "cpp";
+			els.optionsLab.style.display = isNist ? "none" : "grid";
+			els.optionsNist.style.display = isNist ? "grid" : "none";
+			syncTestTypeUI();
+		}
+
 		function bindTestTypeToggle() {
 			document.querySelectorAll("input[name='testMode']").forEach(radio => {
 				radio.addEventListener("change", syncTestTypeUI);
 			});
+		}
+
+		function bindBackendTypeToggle() {
+			els.backendType.addEventListener("change", syncBackendUI);
 		}
 
 		/* ===== Param panel toggle ===== */
@@ -767,6 +902,16 @@
 				const panel = document.getElementById(targetId);
 				if (!panel) return;
 				panel.classList.toggle("show", input.checked);
+			});
+			// NIST verbose level toggle
+			if (els.nistVerboseEnable) {
+				els.nistVerboseParams.classList.toggle("show", els.nistVerboseEnable.checked);
+			}
+		}
+
+		function bindNistVerboseToggle() {
+			els.nistVerboseEnable.addEventListener("change", () => {
+				els.nistVerboseParams.classList.toggle("show", els.nistVerboseEnable.checked);
 			});
 		}
 
@@ -843,6 +988,32 @@
 
 		function buildPayload(base64Data) {
 			const mode = getSelectedMode();
+			const backend = getSelectedBackend();
+			const isNist = backend === "cpp";
+
+			if (isNist) {
+				const payload = {
+					datafile: base64Data,
+					bits_per_symbol: parseInt(els.nistBitsPerSymbol.value, 10) || 0,
+					mode: mode,
+					verbose: els.nistVerboseEnable.checked ? (parseInt(els.nistVerboseLevel.value, 10) || 1) : 0,
+					h_i: null,
+					initial: true,
+					all_bits: true,
+					run_iid_validation: false
+				};
+				if (mode === "restart") {
+					payload.h_i = parseFloat(els.nistHiValue.value) || null;
+					payload.run_iid_validation = els.nistIidValidationEnable.checked;
+				}
+				if (mode === "iid") {
+					payload.initial = els.nistInitialEnable.checked;
+					payload.all_bits = els.nistAllBitsEnable.checked;
+				}
+				return payload;
+			}
+
+			// Lab version payload
 			const payload = {
 				datafile: base64Data,
 				bits_per_symbol: parseInt(els.bitsPerSymbol.value, 10) || 8,
@@ -867,27 +1038,48 @@
 				return false;
 			}
 			const mode = getSelectedMode();
+			const backend = getSelectedBackend();
+			const isNist = backend === "cpp";
+
 			if (!mode) {
 				showStatus("error", "请选择一项测试模式（Restart / IID / Non-IID）。");
 				return false;
 			}
-			if (mode === "restart") {
-				const hi = parseFloat(els.hiValue.value);
-				if (isNaN(hi) || hi < 0) {
-					showStatus("error", "Restart 测试需要填写有效的初始熵估值 H_I（≥ 0）。");
+
+			if (isNist) {
+				// NIST version validation
+				if (mode === "restart") {
+					const hi = parseFloat(els.nistHiValue.value);
+					if (isNaN(hi) || hi < 0) {
+						showStatus("error", "Restart 测试需要填写有效的初始熵估值 H_I（≥ 0）。");
+						return false;
+					}
+				}
+				const bps = parseInt(els.nistBitsPerSymbol.value, 10);
+				if (isNaN(bps) || bps < 0 || bps > 16) {
+					showStatus("error", "符号位宽 bits_per_symbol 必须在 0~16 之间（0 表示自动检测）。");
 					return false;
 				}
-			}
-			const bps = parseInt(els.bitsPerSymbol.value, 10);
-			if (isNaN(bps) || bps < 1 || bps > 8) {
-				showStatus("error", "符号位宽 bits_per_symbol 必须在 1~8 之间。");
-				return false;
-			}
-			if (mode === "noniid" && els.useBitsEnable.checked) {
-				const ub = parseInt(els.useBitsValue.value, 10);
-				if (isNaN(ub) || ub < 1) {
-					showStatus("error", "use_bits 必须为 ≥ 1 的整数。");
+			} else {
+				// Lab version validation
+				if (mode === "restart") {
+					const hi = parseFloat(els.hiValue.value);
+					if (isNaN(hi) || hi < 0) {
+						showStatus("error", "Restart 测试需要填写有效的初始熵估值 H_I（≥ 0）。");
+						return false;
+					}
+				}
+				const bps = parseInt(els.bitsPerSymbol.value, 10);
+				if (isNaN(bps) || bps < 1 || bps > 8) {
+					showStatus("error", "符号位宽 bits_per_symbol 必须在 1~8 之间。");
 					return false;
+				}
+				if (mode === "noniid" && els.useBitsEnable.checked) {
+					const ub = parseInt(els.useBitsValue.value, 10);
+					if (isNaN(ub) || ub < 1) {
+						showStatus("error", "use_bits 必须为 ≥ 1 的整数。");
+						return false;
+					}
 				}
 			}
 			return true;
@@ -895,9 +1087,43 @@
 
 		/* ===== Result rendering ===== */
 
-		function normalizeResult(mode, raw) {
+		function normalizeResult(mode, raw, backend) {
 			if (!raw) return { status: "error", message: "空结果" };
 
+			const isNist = backend === "cpp";
+
+			if (isNist) {
+				// NIST C++ recode version uses testCases array
+				if (mode === "restart") {
+					const hMin = raw.h_min !== undefined ? raw.h_min : raw.H_I;
+					return {
+						status: "ok",
+						h_min: hMin,
+						H_I: raw.H_I,
+						message: "Restart 测试完成",
+					};
+				}
+				if (mode === "iid" || mode === "noniid") {
+					const testCases = raw.testCases || [];
+					const overall = testCases.find(tc => tc.testCaseDesc === "Overall") || testCases[testCases.length - 1];
+					const hAssessed = overall ? (overall.hAssessed ?? overall.h_assessed ?? -1) : -1;
+					const errorLevel = raw.errorLevel !== undefined ? raw.errorLevel : raw.error_level;
+					const errorMsg = raw.errorMsg !== undefined ? raw.errorMsg : raw.error_msg;
+
+					if (errorLevel && errorLevel < 0) {
+						return { status: "error", message: errorMsg || "数据不足或处理失败" };
+					}
+
+					return {
+						status: "ok",
+						h_min: hAssessed,
+						testCases: testCases,
+						message: (mode === "iid" ? "IID" : "Non-IID") + " 熵评估完成",
+					};
+				}
+			}
+
+			// Lab version
 			if (mode === "restart") {
 				return {
 					status: raw.passed ? "ok" : "error",
@@ -931,6 +1157,7 @@
 
 			let mode = null;
 			let raw = null;
+			const backend = getSelectedBackend();
 
 			if (data.Restart_Test) {
 				mode = "restart";
@@ -944,11 +1171,14 @@
 			}
 
 			if (raw) {
-				const normalized = normalizeResult(mode, raw);
-				appendResultRow(mode.toUpperCase(), normalized);
+				const normalized = normalizeResult(mode, raw, backend);
+				appendResultRow(mode.toUpperCase(), normalized, backend);
 
 				if (mode === "noniid" && raw.details) {
 					appendDetailsTable(raw.details);
+				}
+				if (backend === "cpp" && normalized.testCases) {
+					appendNistDetailsTable(mode, normalized.testCases);
 				}
 			}
 
@@ -963,7 +1193,8 @@
 			els.resultPanel.style.display = "block";
 		}
 
-		function appendResultRow(mode, res) {
+		function appendResultRow(mode, res, backend) {
+			const isNist = backend === "cpp";
 			const isError = res && res.status === "error";
 			const tr = document.createElement("tr");
 			const statusHTML = isError
@@ -973,15 +1204,26 @@
 			const note = (res.message || "-");
 
 			if (mode === "RESTART") {
-				const fVal = isError ? "-" : formatNum(res.F);
-				const uVal = isError ? "-" : formatNum(res.U);
-				tr.innerHTML = [
-					"<td class=\"mono\">" + mode + "</td>",
-					"<td>" + statusHTML + "</td>",
-					"<td class=\"mono\">" + hMin + "</td>",
-					"<td class=\"mono\" colspan=\"2\">F = " + fVal + ", U = " + uVal + "</td>",
-					"<td class=\"mono\" colspan=\"2\">" + escapeHTML(note) + "</td>"
-				].join("");
+				if (isNist) {
+					const hiVal = isError ? "-" : formatNum(res.H_I);
+					tr.innerHTML = [
+						"<td class=\"mono\">" + mode + "</td>",
+						"<td>" + statusHTML + "</td>",
+						"<td class=\"mono\">" + hMin + "</td>",
+						"<td class=\"mono\" colspan=\"2\">H_I = " + hiVal + "</td>",
+						"<td class=\"mono\" colspan=\"2\">" + escapeHTML(note) + "</td>"
+					].join("");
+				} else {
+					const fVal = isError ? "-" : formatNum(res.F);
+					const uVal = isError ? "-" : formatNum(res.U);
+					tr.innerHTML = [
+						"<td class=\"mono\">" + mode + "</td>",
+						"<td>" + statusHTML + "</td>",
+						"<td class=\"mono\">" + hMin + "</td>",
+						"<td class=\"mono\" colspan=\"2\">F = " + fVal + ", U = " + uVal + "</td>",
+						"<td class=\"mono\" colspan=\"2\">" + escapeHTML(note) + "</td>"
+					].join("");
+				}
 			} else if (mode === "IID") {
 				tr.innerHTML = [
 					"<td class=\"mono\">" + mode + "</td>",
@@ -1033,6 +1275,59 @@
 				const isMin = val === Math.min(...Object.values(details));
 				const highlight = isMin ? ' style="background:#eef6ff;font-weight:700;"' : '';
 				html += '<tr' + highlight + '><td class="mono">' + key + '</td><td>' + enName + '</td><td class="mono">' + formatNum(val) + '</td></tr>';
+			}
+			html += '</tbody>';
+
+			tbl.innerHTML = html;
+			wrap.appendChild(tbl);
+			section.appendChild(wrap);
+			els.resultBody.closest(".table-wrap").parentNode.appendChild(section);
+		}
+
+		function appendNistDetailsTable(mode, testCases) {
+			if (!testCases || !Array.isArray(testCases) || testCases.length === 0) return;
+
+			const section = document.createElement("div");
+			section.style.cssText = "margin-top:12px;";
+			section.className = "estimator-details";
+			const title = mode === "iid" ? "IID 测试用例明细" : "Non-IID 测试用例明细";
+			section.innerHTML = '<div style="font-size:13px;font-weight:600;color:#1f4e7c;margin-bottom:8px;">' + title + '</div>';
+
+			const wrap = document.createElement("div");
+			wrap.className = "table-wrap";
+			const tbl = document.createElement("table");
+			tbl.style.minWidth = "auto";
+
+			let html = '<thead><tr><th>测试用例</th><th>H_original</th><th>H_bitstring</th><th>H_assessed</th><th>其他信息</th></tr></thead><tbody>';
+			for (const tc of testCases) {
+				const desc = tc.testCaseDesc || tc.test_case_number || "-";
+				const hOrig = tc.hOriginal !== undefined ? formatNum(tc.hOriginal) : "-";
+				const hBit = tc.hBitstring !== undefined ? formatNum(tc.hBitstring) : "-";
+				const hAssessed = tc.hAssessed !== undefined ? formatNum(tc.hAssessed) : "-";
+
+				// Build extra info string
+				const extras = [];
+				if (tc.mean !== undefined) extras.push("mean=" + formatNum(tc.mean));
+				if (tc.median !== undefined) extras.push("median=" + formatNum(tc.median));
+				if (tc.binary !== undefined) extras.push("binary=" + tc.binary);
+				if (tc.passedChiSquareTests !== undefined) extras.push("chi_sq=" + (tc.passedChiSquareTests ? "PASS" : "FAIL"));
+				if (tc.passedLongestRepeatedSubstringTest !== undefined) extras.push("lrs=" + (tc.passedLongestRepeatedSubstringTest ? "PASS" : "FAIL"));
+				if (tc.passedIidPermutationTests !== undefined) extras.push("perm=" + (tc.passedIidPermutationTests ? "PASS" : "FAIL"));
+				if (tc.tTupleRes !== undefined) extras.push("t_tuple=" + formatNum(tc.tTupleRes));
+				if (tc.lrsRes !== undefined) extras.push("lrs=" + formatNum(tc.lrsRes));
+				if (tc.dataWordSize !== undefined) extras.push("word_size=" + formatNum(tc.dataWordSize));
+
+				const extraStr = extras.length > 0 ? extras.join(", ") : "-";
+				const isOverall = desc.toLowerCase().includes("overall");
+				const highlight = isOverall ? ' style="background:#eef6ff;font-weight:700;"' : '';
+
+				html += '<tr' + highlight + '>';
+				html += '<td class="mono">' + escapeHTML(desc) + '</td>';
+				html += '<td class="mono">' + hOrig + '</td>';
+				html += '<td class="mono">' + hBit + '</td>';
+				html += '<td class="mono">' + hAssessed + '</td>';
+				html += '<td class="mono" style="font-size:11px;">' + escapeHTML(extraStr) + '</td>';
+				html += '</tr>';
 			}
 			html += '</tbody>';
 
@@ -1130,7 +1425,8 @@
 				const fileCheck = validateSelectedFile();
 				const base64Data = await readFileAsBase64(fileCheck.file);
 				const payload = buildPayload(base64Data);
-				const apiUrl = resolveApiOrigin() + API_PATH_EST;
+				const apiPath = getSelectedBackend() === "cpp" ? API_PATH_EST_NIST_CPP_RECODE : API_PATH_EST;
+				const apiUrl = resolveApiOrigin() + apiPath;
 
 				const resp = await fetch(apiUrl, {
 					method: "POST",
@@ -1195,8 +1491,10 @@
 			});
 
 			bindTestTypeToggle();
+			bindBackendTypeToggle();
 			refreshParamPanels();
-			syncTestTypeUI();
+			bindNistVerboseToggle();
+			syncBackendUI();
 			bindUploadUX();
 			initViewToggle();
 			els.runBtn.addEventListener("click", runTest);

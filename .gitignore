@@ -1,6 +1,9 @@
 .claude
 .vscode
 
+8ckup/
+docs/
+
 data/*
 !data/.gitkeep
 release/

@@ -14,11 +14,11 @@
 
 ```
 est_test/
-├── est_test.py          # 统一测试入口脚本
-└── README.md            # 本说明文档
+├── est_test.py                    # 统一测试入口脚本（基于 est_core）
+└── README.md                      # 本说明文档
 ```
 
-核心算法模块位于上级目录 `est_core/` 中，由 `est_test.py` 动态引入。
+核心算法模块位于上级目录 `est_core/` 中。
 
 ---
 
@@ -34,7 +34,7 @@ python est_test.py -f <数据文件路径> [选项]
 
 ## 参数说明
 
-### 基础参数（必填）
+#### 基础参数（必填）
 
 | 参数 | 缩写 | 说明 | 默认值 |
 |------|------|------|--------|
@@ -42,7 +42,7 @@ python est_test.py -f <数据文件路径> [选项]
 | `--bits_per_symbol` | `-b` | 每个样本符号所占的比特数 | `8` |
 | `--verbose` | `-v` | 输出详细的内部测试过程信息 | 关闭 |
 
-### 测试模式选项（至少选择一项）
+#### 测试模式选项（至少选择一项）
 
 | 参数 | 说明 |
 |------|------|
@@ -50,7 +50,7 @@ python est_test.py -f <数据文件路径> [选项]
 | `--iid` | 执行 IID（独立同分布）检验及熵评估 |
 | `--non-iid` | 执行 Non-IID 保守最小熵综合评估 |
 
-### 特定测试的高级参数
+#### 特定测试的高级参数
 
 | 参数 | 适用模式 | 说明 |
 |------|----------|------|
@@ -61,19 +61,19 @@ python est_test.py -f <数据文件路径> [选项]
 
 ## 使用示例
 
-### 1. 执行 Restart 测试（需提供初始熵估计值）
+#### 1. 执行 Restart 测试（需提供初始熵估计值）
 
 ```bash
 python est_test.py -f source_out.bin -b 8 --restart --h-i 0.95 -v
 ```
 
-### 2. 仅执行 IID 测试
+#### 2. 仅执行 IID 测试
 
 ```bash
 python est_test.py -f source_out.bin -b 8 --iid
 ```
 
-### 3. 执行 Non-IID 测试，仅使用低 4 位比特
+#### 3. 执行 Non-IID 测试，仅使用低 4 位比特
 
 ```bash
 python est_test.py -f source_out.bin -b 8 --non-iid --use-bits 4 -v
