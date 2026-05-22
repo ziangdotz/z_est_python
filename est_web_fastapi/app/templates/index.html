@@ -26,7 +26,11 @@
 			--font-mono: "Cascadia Code", "Consolas", monospace;
 		}
 
-		* {
+		/* ===== Reset ===== */
+
+		*,
+		*::before,
+		*::after {
 			box-sizing: border-box;
 		}
 
@@ -36,6 +40,8 @@
 			padding: 0;
 			min-height: 100%;
 			font-family: var(--font-main);
+			font-size: 16px;
+			line-height: 1.5;
 			color: var(--text);
 			background:
 				radial-gradient(1200px 700px at 8% -8%, #d8e9ff 0%, transparent 62%),
@@ -49,6 +55,7 @@
 			width: min(1200px, 100% - 32px);
 			margin: 24px auto 28px;
 			display: grid;
+			grid-template-columns: 1fr;
 			gap: 18px;
 			animation: riseIn 380ms ease-out;
 		}
@@ -69,6 +76,7 @@
 
 		.hero {
 			display: flex;
+			flex-direction: row;
 			justify-content: space-between;
 			align-items: center;
 			gap: 16px;
@@ -79,30 +87,35 @@
 			margin: 0;
 			font-size: clamp(24px, 3.2vw, 36px);
 			font-weight: 700;
+			line-height: 1.2;
 			letter-spacing: 0.2px;
+			color: var(--text);
 		}
 
 		.hero p {
 			margin: 8px 0 0;
 			font-size: 14px;
+			line-height: 1.5;
 			color: var(--muted);
 		}
 
 		.chip {
+			display: inline-block;
 			padding: 9px 14px;
 			border: 1px solid var(--line);
 			border-radius: 999px;
 			background: #ffffff;
-			color: var(--accent-strong);
 			font-size: 13px;
-			font-weight: 600;
+			font-weight: 700;
+			line-height: 1;
+			color: var(--accent-strong);
 			white-space: nowrap;
 		}
 
 		.version {
+			font-family: var(--font-mono);
 			font-size: 14px;
 			font-weight: 400;
-			font-family: var(--font-mono);
 			color: var(--muted);
 		}
 
@@ -110,8 +123,8 @@
 
 		.grid {
 			display: grid;
-			gap: 18px;
 			grid-template-columns: 4fr 6fr;
+			gap: 18px;
 		}
 
 		/* ===== Panel ===== */
@@ -123,6 +136,9 @@
 		.panel h2 {
 			margin: 0 0 14px;
 			font-size: 19px;
+			font-weight: 600;
+			line-height: 1.3;
+			color: var(--text);
 		}
 
 		/* ===== Upload box ===== */
@@ -140,6 +156,8 @@
 			transform: translateY(-2px);
 		}
 
+		/* ===== API row ===== */
+
 		.api-row {
 			display: grid;
 			grid-template-columns: 1fr auto;
@@ -155,8 +173,17 @@
 			background: #fff;
 			font-family: var(--font-mono);
 			font-size: 12px;
+			line-height: 1.4;
 			color: var(--text);
+			outline: none;
+			transition: border-color 150ms ease;
 		}
+
+		.api-row input[type="text"]:focus {
+			border-color: var(--accent);
+		}
+
+		/* ===== Mode row ===== */
 
 		.mode-row {
 			margin-top: 16px;
@@ -165,6 +192,7 @@
 			gap: 18px;
 			align-items: center;
 			font-size: 14px;
+			line-height: 1.4;
 			color: var(--text);
 		}
 
@@ -173,7 +201,10 @@
 			align-items: center;
 			gap: 6px;
 			font-weight: 600;
+			cursor: pointer;
 		}
+
+		/* ===== Row ===== */
 
 		.row {
 			margin-top: 14px;
@@ -183,12 +214,16 @@
 			align-items: center;
 		}
 
+		/* ===== Button ===== */
+
 		.btn {
 			padding: 10px 14px;
 			border: none;
 			border-radius: 10px;
+			font-family: var(--font-main);
 			font-size: 14px;
 			font-weight: 600;
+			line-height: 1;
 			cursor: pointer;
 			transition: transform 150ms ease, box-shadow 150ms ease, opacity 150ms ease;
 		}
@@ -213,15 +248,19 @@
 			color: var(--accent-strong);
 		}
 
+		/* ===== Loading ===== */
+
 		.loading {
 			display: none;
 			align-items: center;
 			gap: 10px;
 			font-size: 13px;
+			line-height: 1;
 			color: var(--muted);
 		}
 
 		.dot {
+			display: inline-block;
 			width: 8px;
 			height: 8px;
 			border-radius: 50%;
@@ -230,16 +269,22 @@
 			animation: pulse 1.25s infinite;
 		}
 
+		/* ===== File meta ===== */
+
 		.file-meta {
-			margin-top: 14px;
 			display: none;
+			margin-top: 14px;
 			padding: 12px;
 			border: 1px solid var(--line);
 			border-radius: var(--radius-md);
 			background: #fff;
 			font-size: 13px;
+			line-height: 1.5;
+			color: var(--text);
 			animation: fadeIn 220ms ease-out;
 		}
+
+		/* ===== Backend select ===== */
 
 		.backend-select {
 			width: 100%;
@@ -249,24 +294,28 @@
 			background: #fff;
 			font-family: var(--font-main);
 			font-size: 14px;
+			line-height: 1.4;
 			color: var(--text);
 			cursor: pointer;
 			outline: none;
-			transition: border-color 150ms ease;
 			appearance: auto;
+			transition: border-color 150ms ease;
 		}
 
 		.backend-select:focus {
 			border-color: var(--accent);
 		}
 
+		/* ===== Status ===== */
+
 		.status {
-			margin-top: 12px;
 			display: none;
+			margin-top: 12px;
 			padding: 10px 12px;
 			border: 1px solid transparent;
 			border-radius: 10px;
 			font-size: 13px;
+			line-height: 1.4;
 		}
 
 		.status.error {
@@ -285,6 +334,7 @@
 
 		.options {
 			display: grid;
+			grid-template-columns: 1fr;
 			gap: 10px;
 			max-height: 500px;
 			padding-right: 4px;
@@ -294,7 +344,10 @@
 
 		.options.readonly {
 			opacity: 0.5;
+			pointer-events: none;
 		}
+
+		/* ===== Option ===== */
 
 		.option {
 			padding: 11px 12px;
@@ -309,14 +362,17 @@
 			gap: 8px;
 			font-size: 14px;
 			font-weight: 600;
+			line-height: 1.3;
+			color: var(--text);
+			cursor: pointer;
 		}
 
 		.option-desc {
 			margin-top: 6px;
 			padding-left: 30px;
 			font-size: 12px;
-			color: var(--muted);
 			line-height: 1.5;
+			color: var(--muted);
 		}
 
 		.option.disabled {
@@ -324,9 +380,11 @@
 			pointer-events: none;
 		}
 
+		/* ===== Params ===== */
+
 		.params {
-			margin-top: 8px;
 			display: none;
+			margin-top: 8px;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			gap: 8px;
 		}
@@ -347,6 +405,8 @@
 			font-weight: 400;
 		}
 
+		/* ===== Param field ===== */
+
 		.param-field {
 			display: flex;
 			align-items: center;
@@ -354,12 +414,15 @@
 		}
 
 		.param-label {
+			font-family: var(--font-mono);
 			font-size: 12px;
 			font-weight: 600;
-			font-family: var(--font-mono);
+			line-height: 1;
 			color: var(--muted);
 			white-space: nowrap;
 		}
+
+		/* ===== Number input ===== */
 
 		input[type="number"] {
 			width: 100%;
@@ -368,15 +431,25 @@
 			border-radius: 8px;
 			background: #fff;
 			font-family: var(--font-mono);
+			font-size: 13px;
+			line-height: 1.4;
 			color: var(--text);
+			outline: none;
+			transition: border-color 150ms ease;
+		}
+
+		input[type="number"]:focus {
+			border-color: var(--accent);
 		}
 
 		/* ===== Result panel ===== */
 
 		.result-panel {
-			padding: 18px;
 			display: none;
+			padding: 18px;
 		}
+
+		/* ===== Result header ===== */
 
 		.result-header {
 			display: flex;
@@ -389,7 +462,12 @@
 		.result-header h2 {
 			margin: 0;
 			font-size: 19px;
+			font-weight: 600;
+			line-height: 1.3;
+			color: var(--text);
 		}
+
+		/* ===== Result tabs ===== */
 
 		.result-tabs {
 			display: flex;
@@ -401,8 +479,10 @@
 			border: 1px solid var(--line);
 			border-radius: 8px;
 			background: #fff;
+			font-family: var(--font-main);
 			font-size: 13px;
 			font-weight: 600;
+			line-height: 1;
 			color: var(--muted);
 			cursor: pointer;
 			transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
@@ -410,9 +490,11 @@
 
 		.result-tab.active {
 			background: var(--accent);
-			color: #fff;
 			border-color: var(--accent);
+			color: #fff;
 		}
+
+		/* ===== Table wrap ===== */
 
 		.table-wrap {
 			overflow-x: auto;
@@ -421,19 +503,24 @@
 			background: #fff;
 		}
 
+		/* ===== Table ===== */
+
 		table {
 			width: 100%;
 			min-width: 680px;
 			border-collapse: collapse;
 			font-size: 13px;
+			line-height: 1.4;
+			color: var(--text);
 		}
 
 		thead th {
 			padding: 11px;
 			border-bottom: 1px solid var(--line);
 			background: #eef6ff;
-			color: #1f4e7c;
+			font-weight: 600;
 			text-align: left;
+			color: #1f4e7c;
 		}
 
 		tbody td {
@@ -446,19 +533,25 @@
 			background: #fbfdff;
 		}
 
+		/* ===== Mono ===== */
+
 		.mono {
 			font-family: var(--font-mono);
 		}
+
+		/* ===== Pass cell ===== */
 
 		.pass-cell {
 			text-align: center;
 		}
 
+		/* ===== JSON wrap ===== */
+
 		.json-wrap {
 			display: none;
 			max-height: 500px;
-			overflow: auto;
 			padding: 14px;
+			overflow: auto;
 			border: 1px solid var(--line);
 			border-radius: 14px;
 			background: #1b2838;
@@ -1343,17 +1436,6 @@
 			if (Number.isFinite(num)) return num.toFixed(4);
 			if (Array.isArray(val)) return val.map(v => Number(v).toFixed(4)).join(", ");
 			return String(val);
-		}
-
-		function formatCI(ci) {
-			if (!ci) return "-";
-			if (Array.isArray(ci) && ci.length === 2) {
-				return "[" + Number(ci[0]).toFixed(4) + ", " + Number(ci[1]).toFixed(4) + "]";
-			}
-			if (typeof ci === "object" && ci.lower !== undefined) {
-				return "[" + Number(ci.lower).toFixed(4) + ", " + Number(ci.upper).toFixed(4) + "]";
-			}
-			return String(ci);
 		}
 
 		function escapeHTML(str) {
