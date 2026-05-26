@@ -11,7 +11,7 @@ from typing import Final
 
 # -- Application identity -------------------------------------------------
 
-APP_TITLE: Final = "est_test_vue3_pywebview"
+APP_TITLE: Final = "est_test_x_vue3_pywebview"
 APP_VERSION: Final = "1.0.1"
 
 # -- Network / server -----------------------------------------------------

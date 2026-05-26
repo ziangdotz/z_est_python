@@ -24,7 +24,7 @@ BUILD_DIR := bin
 FRONTEND_DIR = frontend
 FRONTENDDIST_DIR = $(FRONTEND_DIR)/dist
 
-APPNAME := est_test_vue3_pywebview
+APPNAME := est_test_x_vue3_pywebview
 APPLOGO_TRAY_IMG := assets/app_logo.png
 APPLOGO_ICON := assets/app_logo.ico
 

@@ -33,6 +33,7 @@ const bitsPerSymbol = ref(8)
 const hiValue = ref('')
 const useBitsValue = ref('')
 const verbose = ref(false)
+const useNistRewrite = ref(false)
 
 // ---------------------------------------------------------------------------
 //  State — runtime
@@ -460,6 +461,17 @@ onBeforeUnmount(() => {
 
 		<!-- Right: 控制面板 -->
 		<div class="control_panel">
+			<!-- Version selector -->
+			<div class="selectors_row">
+				<div class="field_pair selector_pair">
+					<label>测试版本</label>
+					<select v-model="useNistRewrite">
+						<option :value="false">密码学院实验室版本</option>
+						<option :value="true">NIST开源C++代码重写版本</option>
+					</select>
+				</div>
+			</div>
+
 			<!-- Mode selector + verbose -->
 			<div class="selectors_row">
 				<div class="field_pair selector_pair">

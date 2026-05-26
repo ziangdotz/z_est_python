@@ -111,8 +111,8 @@ def wait_for_server(url: str, timeout: float = 3.0) -> bool:
 def get_adaptive_size() -> tuple[int, int]:
     try:
         phys_w, phys_h = get_physical_screen_size()
-        width = max(int(phys_w * 0.520), LIMIT_MIN_WIDTH)
-        height = max(int(phys_h * 0.520), LIMIT_MIN_HEIGHT)
+        width = max(int(phys_w * 0.610), LIMIT_MIN_WIDTH)
+        height = max(int(phys_h * 0.610), LIMIT_MIN_HEIGHT)
         return width, height
     except Exception:
         return LIMIT_MIN_WIDTH, LIMIT_MIN_HEIGHT

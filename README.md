@@ -24,11 +24,11 @@ cd est_test_nist_cpp_recode
 python est_test_nist_cpp_recode.py
 ```
 
-#### **3. est_test_vue3_pywebview**
+#### **3. est_test_x_vue3_pywebview**
 
 进入目录
 ```
-cd est_test_vue3_pywebview
+cd est_test_x_vue3_pywebview
 ```
 运行
 ```

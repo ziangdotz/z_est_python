@@ -99,7 +99,8 @@ class Api:
                 set_window_dark_titlebar(hwnd, dark)
                 return
             time.sleep(0.05)
-        logger.warning("HWND not found after 20 retries, skipping titlebar sync")
+        logger.warning(
+            "HWND not found after 20 retries, skipping titlebar sync")
 
     # -- HTTP proxy (frontend calls via pywebview) -------------------------
 
