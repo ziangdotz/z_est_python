@@ -14,11 +14,18 @@ import tkinter as _tk
 import urllib.request
 from tkinter import filedialog as _filedialog
 
-from .est_test_vue3_pywebview import (
-    cleanup_entropy_test as _cleanup_entropy_test,
-    poll_entropy_test as _poll_entropy_test,
-    start_entropy_test as _start_entropy_test,
-)
+from . import est_test_vue3_pywebview as _orig
+from . import est_test_nist_cpp_recode_vue3_pywebview as _nist
+
+_active_module = _orig
+
+
+def _use_module(payload: dict | None = None):
+    global _active_module
+    if payload is not None:
+        _active_module = _nist if payload.pop("use_nist_cpp_recode", False) else _orig
+    return _active_module
+
 from .win32 import (
     find_hwnd_by_title,
     find_main_hwnd,
@@ -120,15 +127,15 @@ class Api:
 
     def start_entropy_test(self, payload: dict) -> dict:
         """Launch entropy test in a subprocess, returns immediately."""
-        return _start_entropy_test(payload)
+        return _use_module(payload).start_entropy_test(payload)
 
     def poll_entropy_test(self) -> dict:
         """Non-blocking poll for log messages and completion status."""
-        return _poll_entropy_test()
+        return _use_module().poll_entropy_test()
 
     def cleanup_entropy_test(self) -> None:
         """Release all held memory from the last test run."""
-        return _cleanup_entropy_test()
+        _use_module().cleanup_entropy_test()
 
     # -- Result export to file --------------------------------------------
 

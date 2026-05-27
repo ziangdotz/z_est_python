@@ -2,7 +2,7 @@
 NIST SP800-90B Entropy Test Runner — pywebview frontend backend.
 
 Provides progress-aware test orchestration for three NIST test modes
-(Non-IID, IID, Restart) and exposes a JSON-serialisable API for the
+(Restart, IID, Non-IID) and exposes a JSON-serialisable API for the
 Vue 3 frontend via the pywebview JS-API bridge.
 
 Each test runs in a **subprocess** so that all memory used by est_core
@@ -75,9 +75,175 @@ def _emit(log_queue: Queue, value: float) -> None:  # type: ignore[type-arg]
 #  Progress-aware test runners
 #
 #  Each function replicates the orchestration logic of its est_core
-#  counterpart (main_noniid / main_iid / main_restart) while emitting
+#  counterpart (main_restart / main_iid / main_noniid) while emitting
 #  progress messages between stages.  No est_core files are modified.
 # ===========================================================================
+
+
+def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
+    """Restart validation with sub-progress within row/column loops."""
+
+    from util import to_dataset, get_z                                    # type: ignore[import-not-found]
+    from mostCommonValue import mostCommonValueRestart                     # type: ignore[import-not-found]
+
+    datafile = str(payload.get("datafile", "")).strip()
+    bits_per_symbol = int(payload.get("bits_per_symbol") or 8)
+    verbose = bool(payload.get("verbose", False))
+    H_I = float(payload.get("h_i"))
+
+    with open(datafile, "rb") as fh:
+        # -- Data loading ---------------------------------------------------
+        raw = bytearray(fh.read())
+        dataset = to_dataset(raw, bits_per_symbol)
+        k = len(set(dataset))
+        _emit(log_queue, 0.05)
+
+        if verbose:
+            print("file and dataset details")
+            print("Read in file %s, %d bytes long." % (datafile, len(raw)))
+            print(
+                "Dataset: %d %d-bit symbols, %d symbols in alphabet."
+                % (len(dataset), bits_per_symbol, k)
+            )
+            print("Output symbol values: min = %d, max = %d" % (min(dataset), max(dataset)))
+
+        _min_entropy = float(math.log(k, 2))
+        assert len(dataset) == 1_000_000
+
+        alpha = 0.01 / (2000 * k)
+
+        # -- Row analysis (1 000 rows) --------------------------------------
+        if verbose:
+            print("\nRunning sanity check on row dataset:")
+
+        f = [0] * 1000
+        for i in range(1000):
+            f[i] = mostCommonValueRestart(dataset[i * 1000 : (i + 1) * 1000])
+            if (i + 1) % 100 == 0:
+                _emit(log_queue, 0.05 + 0.40 * ((i + 1) / 1000))
+
+        F_R = max(f)
+        _emit(log_queue, 0.45)
+        if verbose:
+            print("- F_R: %d" % F_R)
+
+        # -- Column analysis (1 000 columns) --------------------------------
+        if verbose:
+            print("Running sanity check on column dataset:")
+
+        f = [0] * 1000
+        for i in range(1000):
+            column = [dataset[j * 1000 + i] for j in range(1000)]
+            f[i] = mostCommonValueRestart(column)
+            if (i + 1) % 100 == 0:
+                _emit(log_queue, 0.45 + 0.45 * ((i + 1) / 1000))
+
+        F_C = max(f)
+        _emit(log_queue, 0.90)
+        if verbose:
+            print("- F_C: %d" % F_C)
+
+        # -- Confidence-interval validation ---------------------------------
+        F = max(F_R, F_C)
+        p = math.pow(2, -H_I)
+        Z = get_z(alpha)
+        U = 1000 * p + Z * math.sqrt(1000 * p * (1 - p))
+        if verbose:
+            print("U: %f" % U)
+
+        if F > U:
+            print("Failed the restart tests")
+            print("*** Validation failed. No entropy estimate awarded.")
+            _emit(log_queue, 1.0)
+            return {"passed": False, "H_I": None, "F": F, "U": U}
+
+        print("Passed the restart tests")
+        print("*** Final entropy estimate: %f" % H_I)
+        _emit(log_queue, 1.0)
+        return {"passed": True, "H_I": H_I, "F": F, "U": U}
+
+
+def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
+    """IID entropy estimation with stage-level progress reporting."""
+
+    from util import to_dataset                                            # type: ignore[import-not-found]
+    from permutationTest import permutationTest                            # type: ignore[import-not-found]
+    from chiSquareTest import chiSquareTest                                # type: ignore[import-not-found]
+    from longestRepeatedSubstring import lenOfTheLongestRepeatedSubstringTest  # type: ignore[import-not-found]
+    from mostCommonValue import theMostCommonValueEstimate                 # type: ignore[import-not-found]
+
+    t0 = time.perf_counter()
+
+    datafile = str(payload.get("datafile", "")).strip()
+    bits_per_symbol = int(payload.get("bits_per_symbol") or 8)
+    verbose = bool(payload.get("verbose", False))
+
+    with open(datafile, "rb") as fh:
+        # -- Data loading ---------------------------------------------------
+        raw = bytearray(fh.read())
+        dataset = to_dataset(raw, bits_per_symbol)
+        k = len(set(dataset))
+        _emit(log_queue, 0.05)
+
+        if verbose:
+            print("file and dataset details")
+            print("Read in file %s, %d bytes long." % (datafile, len(raw)))
+            print(
+                "Dataset: %d %d-bit symbols, %d symbols in alphabet."
+                % (len(dataset), bits_per_symbol, k)
+            )
+            print("Output symbol values: min = %d, max = %d\n" % (min(dataset), max(dataset)))
+
+        # -- Permutation test -----------------------------------------------
+        if permutationTest(dataset, verbose):
+            if verbose:
+                print("** Passed IID permutation tests")
+        else:
+            if verbose:
+                print("** Failed IID permutation tests")
+            print("IID = False")
+            _emit(log_queue, 0.60)
+            return {"IID": False, "min_entropy": None, "reason": "Failed IID permutation tests"}
+
+        _emit(log_queue, 0.60)
+
+        # -- Chi-square test ------------------------------------------------
+        if chiSquareTest(dataset, verbose):
+            if verbose:
+                print("** Passed chi square tests")
+        else:
+            if verbose:
+                print("** Failed chi square tests")
+            print("IID = False")
+            _emit(log_queue, 0.75)
+            return {"IID": False, "min_entropy": None, "reason": "Failed chi square tests"}
+
+        _emit(log_queue, 0.75)
+
+        # -- Longest Repeated Substring test --------------------------------
+        if lenOfTheLongestRepeatedSubstringTest(dataset, verbose):
+            if verbose:
+                print("** Passed LRS test")
+            print("\nIID = True")
+        else:
+            print("** Failed LRS test")
+            print("IID = False")
+            _emit(log_queue, 0.90)
+            return {"IID": False, "min_entropy": None, "reason": "Failed LRS test"}
+
+        _emit(log_queue, 0.90)
+
+        # -- Most Common Value entropy estimate -----------------------------
+        _pmax, minH = theMostCommonValueEstimate(dataset)
+        print("min-entropy = %g" % minH)
+        print(
+            "\nDon't forget to run the sanity check on a restart dataset using H_I = %g"
+            % minH
+        )
+        print("Running time: %s Seconds" % (time.perf_counter() - t0))
+
+        _emit(log_queue, 1.0)
+        return {"IID": True, "min_entropy": minH}
 
 
 def _run_noniid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
@@ -243,172 +409,6 @@ def _run_noniid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-a
 
         _emit(log_queue, 1.0)
         return {"min_entropy": min_entropy, "details": results}
-
-
-def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
-    """IID entropy estimation with stage-level progress reporting."""
-
-    from util import to_dataset                                            # type: ignore[import-not-found]
-    from permutationTest import permutationTest                            # type: ignore[import-not-found]
-    from chiSquareTest import chiSquareTest                                # type: ignore[import-not-found]
-    from longestRepeatedSubstring import lenOfTheLongestRepeatedSubstringTest  # type: ignore[import-not-found]
-    from mostCommonValue import theMostCommonValueEstimate                 # type: ignore[import-not-found]
-
-    t0 = time.perf_counter()
-
-    datafile = str(payload.get("datafile", "")).strip()
-    bits_per_symbol = int(payload.get("bits_per_symbol") or 8)
-    verbose = bool(payload.get("verbose", False))
-
-    with open(datafile, "rb") as fh:
-        # -- Data loading ---------------------------------------------------
-        raw = bytearray(fh.read())
-        dataset = to_dataset(raw, bits_per_symbol)
-        k = len(set(dataset))
-        _emit(log_queue, 0.05)
-
-        if verbose:
-            print("file and dataset details")
-            print("Read in file %s, %d bytes long." % (datafile, len(raw)))
-            print(
-                "Dataset: %d %d-bit symbols, %d symbols in alphabet."
-                % (len(dataset), bits_per_symbol, k)
-            )
-            print("Output symbol values: min = %d, max = %d\n" % (min(dataset), max(dataset)))
-
-        # -- Permutation test -----------------------------------------------
-        if permutationTest(dataset, verbose):
-            if verbose:
-                print("** Passed IID permutation tests")
-        else:
-            if verbose:
-                print("** Failed IID permutation tests")
-            print("IID = False")
-            _emit(log_queue, 0.60)
-            return {"IID": False, "min_entropy": None, "reason": "Failed IID permutation tests"}
-
-        _emit(log_queue, 0.60)
-
-        # -- Chi-square test ------------------------------------------------
-        if chiSquareTest(dataset, verbose):
-            if verbose:
-                print("** Passed chi square tests")
-        else:
-            if verbose:
-                print("** Failed chi square tests")
-            print("IID = False")
-            _emit(log_queue, 0.75)
-            return {"IID": False, "min_entropy": None, "reason": "Failed chi square tests"}
-
-        _emit(log_queue, 0.75)
-
-        # -- Longest Repeated Substring test --------------------------------
-        if lenOfTheLongestRepeatedSubstringTest(dataset, verbose):
-            if verbose:
-                print("** Passed LRS test")
-            print("\nIID = True")
-        else:
-            print("** Failed LRS test")
-            print("IID = False")
-            _emit(log_queue, 0.90)
-            return {"IID": False, "min_entropy": None, "reason": "Failed LRS test"}
-
-        _emit(log_queue, 0.90)
-
-        # -- Most Common Value entropy estimate -----------------------------
-        _pmax, minH = theMostCommonValueEstimate(dataset)
-        print("min-entropy = %g" % minH)
-        print(
-            "\nDon't forget to run the sanity check on a restart dataset using H_I = %g"
-            % minH
-        )
-        print("Running time: %s Seconds" % (time.perf_counter() - t0))
-
-        _emit(log_queue, 1.0)
-        return {"IID": True, "min_entropy": minH}
-
-
-def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
-    """Restart validation with sub-progress within row/column loops."""
-
-    from util import to_dataset, get_z                                    # type: ignore[import-not-found]
-    from mostCommonValue import mostCommonValueRestart                     # type: ignore[import-not-found]
-
-    datafile = str(payload.get("datafile", "")).strip()
-    bits_per_symbol = int(payload.get("bits_per_symbol") or 8)
-    verbose = bool(payload.get("verbose", False))
-    H_I = float(payload.get("h_i"))
-
-    with open(datafile, "rb") as fh:
-        # -- Data loading ---------------------------------------------------
-        raw = bytearray(fh.read())
-        dataset = to_dataset(raw, bits_per_symbol)
-        k = len(set(dataset))
-        _emit(log_queue, 0.05)
-
-        if verbose:
-            print("file and dataset details")
-            print("Read in file %s, %d bytes long." % (datafile, len(raw)))
-            print(
-                "Dataset: %d %d-bit symbols, %d symbols in alphabet."
-                % (len(dataset), bits_per_symbol, k)
-            )
-            print("Output symbol values: min = %d, max = %d" % (min(dataset), max(dataset)))
-
-        _min_entropy = float(math.log(k, 2))
-        assert len(dataset) == 1_000_000
-
-        alpha = 0.01 / (2000 * k)
-
-        # -- Row analysis (1 000 rows) --------------------------------------
-        if verbose:
-            print("\nRunning sanity check on row dataset:")
-
-        f = [0] * 1000
-        for i in range(1000):
-            f[i] = mostCommonValueRestart(dataset[i * 1000 : (i + 1) * 1000])
-            if (i + 1) % 100 == 0:
-                _emit(log_queue, 0.05 + 0.40 * ((i + 1) / 1000))
-
-        F_R = max(f)
-        _emit(log_queue, 0.45)
-        if verbose:
-            print("- F_R: %d" % F_R)
-
-        # -- Column analysis (1 000 columns) --------------------------------
-        if verbose:
-            print("Running sanity check on column dataset:")
-
-        f = [0] * 1000
-        for i in range(1000):
-            column = [dataset[j * 1000 + i] for j in range(1000)]
-            f[i] = mostCommonValueRestart(column)
-            if (i + 1) % 100 == 0:
-                _emit(log_queue, 0.45 + 0.45 * ((i + 1) / 1000))
-
-        F_C = max(f)
-        _emit(log_queue, 0.90)
-        if verbose:
-            print("- F_C: %d" % F_C)
-
-        # -- Confidence-interval validation ---------------------------------
-        F = max(F_R, F_C)
-        p = math.pow(2, -H_I)
-        Z = get_z(alpha)
-        U = 1000 * p + Z * math.sqrt(1000 * p * (1 - p))
-        if verbose:
-            print("U: %f" % U)
-
-        if F > U:
-            print("Failed the restart tests")
-            print("*** Validation failed. No entropy estimate awarded.")
-            _emit(log_queue, 1.0)
-            return {"passed": False, "H_I": None, "F": F, "U": U}
-
-        print("Passed the restart tests")
-        print("*** Final entropy estimate: %f" % H_I)
-        _emit(log_queue, 1.0)
-        return {"passed": True, "H_I": H_I, "F": F, "U": U}
 
 
 # ===========================================================================

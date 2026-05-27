@@ -33,7 +33,11 @@ const bitsPerSymbol = ref(8)
 const hiValue = ref('')
 const useBitsValue = ref('')
 const verbose = ref(false)
-const useNistRewrite = ref(false)
+const useNistCppRecode = ref(false)
+const nistVerboseLevel = ref(1)
+const nistRunIidValidation = ref(false)
+const nistInitial = ref(true)
+const nistAllBits = ref(true)
 
 // ---------------------------------------------------------------------------
 //  State — runtime
@@ -55,6 +59,8 @@ let pollGeneration = 0
 
 const isRestart = computed(() => testMode.value === 'restart')
 const isNonIID = computed(() => testMode.value === 'noniid')
+const isIID = computed(() => testMode.value === 'iid')
+const isNISTCppRecode = computed(() => useNistCppRecode.value)
 
 // ---------------------------------------------------------------------------
 //  Computed — UI state
@@ -231,9 +237,15 @@ function validate() {
 	}
 
 	const bps = parseInt(bitsPerSymbol.value, 10)
-	if (isNaN(bps) || bps < 1 || bps > 8) return t('est.err.bpsRange')
+	const bpsMin = isNISTCppRecode.value ? 0 : 1
+	const bpsMax = isNISTCppRecode.value ? 16 : 8
+	if (isNaN(bps) || bps < bpsMin || bps > bpsMax) {
+		return isNISTCppRecode.value
+			? '符号位宽 bits_per_symbol 必须在 0~16 之间（0 表示自动检测）'
+			: t('est.err.bpsRange')
+	}
 
-	if (isNonIID.value && useBitsValue.value) {
+	if (!isNISTCppRecode.value && isNonIID.value && useBitsValue.value) {
 		const ub = parseInt(useBitsValue.value, 10)
 		if (isNaN(ub) || ub < 1) return t('est.err.ubRange')
 	}
@@ -268,6 +280,10 @@ function clearInputDataPath() {
 function onModeChange() {
 	hiValue.value = ''
 	useBitsValue.value = ''
+	nistRunIidValidation.value = false
+	nistInitial.value = true
+	nistAllBits.value = true
+	nistVerboseLevel.value = 1
 	resultData.value = null
 	resultJson.value = ''
 }
@@ -276,9 +292,10 @@ function buildExportFilename() {
 	const rawPath = testInputParams.inputDataPath.trim()
 	const basename = rawPath.replace(/\\/g, '/').split('/').pop() || 'result'
 	const name = basename.replace(/\.[^.]+$/, '')
+	const versionTag = isNISTCppRecode.value ? '_NIST开源C++代码重写版本' : '_密码学院实验室版本'
 	const hi = hiValue.value || '0'
 	const ub = useBitsValue.value || '0'
-	return `${name}_${testMode.value}_${bitsPerSymbol.value}bps-${hi}h_i-${ub}use_bits.json`
+	return `${name}${versionTag}_${testMode.value}_${bitsPerSymbol.value}bps-${hi}h_i-${ub}use_bits.json`
 }
 
 async function exportResults() {
@@ -331,12 +348,20 @@ async function handleStartTest() {
 
 		const payload = {
 			datafile: testInputParams.inputDataPath.trim(),
-			bits_per_symbol: parseInt(bitsPerSymbol.value, 10) || 8,
+			bits_per_symbol: parseInt(bitsPerSymbol.value, 10) || (isNISTCppRecode.value ? 0 : 8),
 			mode: testMode.value,
-			verbose: verbose.value,
+		}
+		if (isNISTCppRecode.value) {
+			payload.verbose = verbose.value ? nistVerboseLevel.value : 0
+			payload.run_iid_validation = nistRunIidValidation.value
+			payload.initial = nistInitial.value
+			payload.all_bits = nistAllBits.value
+		} else {
+			payload.verbose = verbose.value
+			if (isNonIID.value) payload.use_bits = parseInt(useBitsValue.value, 10) || null
 		}
 		if (isRestart.value) payload.h_i = parseFloat(hiValue.value) || null
-		if (isNonIID.value) payload.use_bits = parseInt(useBitsValue.value, 10) || null
+		payload.use_nist_cpp_recode = isNISTCppRecode.value
 
 		const resp = await window.pywebview.api.start_entropy_test(payload)
 		if (!resp.ok) {
@@ -465,7 +490,7 @@ onBeforeUnmount(() => {
 			<div class="selectors_row">
 				<div class="field_pair selector_pair">
 					<label>测试版本</label>
-					<select v-model="useNistRewrite">
+					<select v-model="useNistCppRecode">
 						<option :value="false">密码学院实验室版本</option>
 						<option :value="true">NIST开源C++代码重写版本</option>
 					</select>
@@ -482,26 +507,35 @@ onBeforeUnmount(() => {
 						<option value="noniid">Non-IID</option>
 					</select>
 				</div>
-				<label class="verbose_toggle"
-					@mouseenter="showTooltip($event, t('est.verbose.desc') || '启用详细输出，显示每个估计器的计算过程')"
-					@mouseleave="hideTooltip">
-					<input v-model="verbose" type="checkbox" />
-					<span class="verbose_toggle_track">
-						<span class="verbose_toggle_thumb" />
-					</span>
-					<span class="verbose_toggle_label">verbose</span>
-				</label>
+				<div class="verbose_section">
+					<label class="verbose_toggle"
+						@mouseenter="showTooltip($event, t('est.verbose.desc') || '启用详细输出，显示每个估计器的计算过程')"
+						@mouseleave="hideTooltip">
+						<input v-model="verbose" type="checkbox" />
+						<span class="verbose_toggle_track">
+							<span class="verbose_toggle_thumb" />
+						</span>
+						<span class="verbose_toggle_label">verbose</span>
+					</label>
+					<template v-if="isNISTCppRecode">
+						<span class="level_hint">level</span>
+						<input v-model.number="nistVerboseLevel" type="number" min="1" max="3" step="1" class="level_input" />
+					</template>
+				</div>
 			</div>
 
-			<!-- Parameters: bps / h_i / use_bits -->
+			<!-- Parameters: bps / h_i / use_bits or run_iid_validation -->
 			<div class="threshold_row">
 				<div class="field_pair">
 					<label
-						@mouseenter="showTooltip($event, t('est.bps.desc'))"
+						@mouseenter="showTooltip($event, isNISTCppRecode
+							? '每个采样值使用的比特数，0 表示自动检测，默认 0'
+							: t('est.bps.desc'))"
 						@mouseleave="hideTooltip">
 						bps
 					</label>
-					<input v-model.number="bitsPerSymbol" type="number" :min="1" :max="8" step="1" />
+					<input v-model.number="bitsPerSymbol" type="number"
+						:min="isNISTCppRecode ? 0 : 1" :max="isNISTCppRecode ? 16 : 8" step="1" />
 				</div>
 				<div class="field_pair" :class="{ disabled: !isRestart }">
 					<label
@@ -511,14 +545,50 @@ onBeforeUnmount(() => {
 					</label>
 					<input v-model="hiValue" type="number" min="0" step="0.01" :disabled="!isRestart" />
 				</div>
-				<div class="field_pair" :class="{ disabled: !isNonIID }">
-					<label
-						@mouseenter="showTooltip($event, t('est.ub.desc') + ' Non-IID 模式下可选。')"
+				<template v-if="isNISTCppRecode">
+					<label class="verbose_toggle" :class="{ disabled: !isRestart }"
+						@mouseenter="showTooltip($event, 'Restart 测试通过后是否额外运行 IID 验证测试')"
 						@mouseleave="hideTooltip">
-						use_bits
+						<input v-model="nistRunIidValidation" type="checkbox" :disabled="!isRestart" />
+						<span class="verbose_toggle_track">
+							<span class="verbose_toggle_thumb" />
+						</span>
+						<span class="verbose_toggle_label">run_iid_validation</span>
 					</label>
-					<input v-model="useBitsValue" type="number" min="1" step="1" :disabled="!isNonIID" />
-				</div>
+				</template>
+				<template v-else>
+					<div class="field_pair" :class="{ disabled: !isNonIID }">
+						<label
+							@mouseenter="showTooltip($event, t('est.ub.desc') + ' Non-IID 模式下可选。')"
+							@mouseleave="hideTooltip">
+							use_bits
+						</label>
+						<input v-model="useBitsValue" type="number" min="1" step="1" :disabled="!isNonIID" />
+					</div>
+				</template>
+			</div>
+
+			<!-- NIST-only extras: initial / all_bits -->
+			<div v-if="isNISTCppRecode" class="threshold_row">
+				<label class="verbose_toggle" :class="{ disabled: !isIID }"
+					@mouseenter="showTooltip($event, '选择计算初始熵估计（默认）或条件化数据集熵估计')"
+					@mouseleave="hideTooltip">
+					<input v-model="nistInitial" type="checkbox" :disabled="!isIID" />
+					<span class="verbose_toggle_track">
+						<span class="verbose_toggle_thumb" />
+					</span>
+					<span class="verbose_toggle_label">initial</span>
+				</label>
+				<label class="verbose_toggle" :class="{ disabled: !isIID }"
+					@mouseenter="showTooltip($event, 'H_bitstring 计算时使用全部 bit（默认），否则截断到前 100 万 bit')"
+					@mouseleave="hideTooltip">
+					<input v-model="nistAllBits" type="checkbox" :disabled="!isIID" />
+					<span class="verbose_toggle_track">
+						<span class="verbose_toggle_thumb" />
+					</span>
+					<span class="verbose_toggle_label">all_bits</span>
+				</label>
+				<label class="verbose_toggle" style="visibility:hidden"><!-- spacer --></label>
 			</div>
 
 			<!-- File selection -->
@@ -764,24 +834,49 @@ onBeforeUnmount(() => {
 /* -- Threshold row (bps / h_i / use_bits) ------------------------------ */
 
 .threshold_row {
-	justify-content: flex-start;
-	flex-wrap: nowrap;
+	display: grid;
+	grid-template-columns: 1fr 1fr 1fr;
+	align-items: center;
 	column-gap: clamp(8px, 0.85vw, 14px);
 }
 
+.threshold_row > * {
+	min-width: 0;
+	overflow: hidden;
+}
+
 .threshold_row .field_pair {
-	flex: 1 1 0;
+	display: flex;
+	align-items: center;
+	gap: var(--row-inline-gap);
 	min-width: 0;
 }
 
 .threshold_row .field_pair input {
-	width: 100%;
+	flex: 1 1 0;
 	min-width: 0;
+	width: auto;
+}
+
+.threshold_row .field_pair label {
+	flex: 0 0 auto;
+	width: var(--pair-label-width);
+	min-width: 0;
+	padding: 0 10px;
 }
 
 .threshold_row .field_pair.disabled {
-	opacity: 0.4;
+	opacity: 0.35;
 	pointer-events: none;
+}
+
+.control_panel input:disabled,
+.control_panel select:disabled {
+	opacity: 0.35;
+	border-color: var(--field-border);
+	background: var(--field-bg);
+	cursor: not-allowed;
+	filter: grayscale(0.6);
 }
 
 .field_pair {
@@ -921,6 +1016,45 @@ onBeforeUnmount(() => {
 	font-size: clamp(12px, 0.9vw, 14px);
 	font-weight: 600;
 	line-height: 1;
+}
+
+/* -- Verbose section (toggle + optional level input) ----------------- */
+
+.verbose_section {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1 1 0;
+	min-width: 0;
+}
+
+.verbose_section .verbose_toggle {
+	flex: 1 1 0;
+}
+
+.level_hint {
+	font-size: clamp(11px, 0.8vw, 13px);
+	font-weight: 600;
+	color: var(--label-text);
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.level_input {
+	width: 48px !important;
+	text-align: center;
+	flex-shrink: 0;
+}
+
+/* -- Disabled state for verbose_toggle inside threshold_row ----------- */
+
+.threshold_row .verbose_toggle {
+	justify-content: center;
+}
+
+.threshold_row .verbose_toggle.disabled {
+	opacity: 0.4;
+	pointer-events: none;
 }
 
 /* -- Selectors row (mode + verbose) ------------------------------------- */
