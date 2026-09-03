@@ -1,17 +1,41 @@
-.claude
-.vscode
+# 编辑器与本地助手状态
+/.claude/
+/.vscode/
+/.idea/
 
-8ckup/
-docs/
+# NIST C++ 上游副本（测试样本 bin/ 与 selftest/refdata 基准），不入库
+/8ckup/
 
-data/*
-!data/.gitkeep
-release/
-!.gitignore
+# 本地设计笔记。必须带前导斜杠：只锚定仓库根的 docs/，
+# 否则 gitignore 会连任意层级的 docs/ 一起忽略（曾误伤 est_test_x_vue3_pywebview/docs/）
+/docs/
 
-__pycache__
+# 输入数据与评估产物：目录保留，内容不入库
+/data/*
+!/data/.gitkeep
 
-bin
-dist
-frontend/node_modules
-frontend/dist
+# 打包输出
+/release/
+
+# Python 与前端构建产物
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+.venv/
+venv/
+node_modules/
+
+# 桌面应用的输出目录（各自的上层 .gitignore 已锚定，这里只列具体路径，
+# 不用裸 bin / dist —— 那会吃掉任意层级同名的源码目录）
+/est_test_x_vue3_pywebview/bin/
+/est_test_x_vue3_pywebview/dist/
+/est_test_x_vue3_pywebview/frontend/dist/
+
+# Windows 资源管理器垃圾
+Thumbs.db
+
+# 临时验证脚本 / 对拍数据（用完即删，不入库）
+/tmp/
+/_tmp_*

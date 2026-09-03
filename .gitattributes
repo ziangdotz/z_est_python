@@ -1,0 +1,40 @@
+# 统一换行策略：入库一律 LF，检出交给各人的 core.autocrlf。
+# 没有这个文件时，同一份代码在 Windows 与 Linux 之间来回会同时看到 CRLF 与 LF，
+# 而 requirements.txt 曾因此被存成 UTF-16LE —— 显式声明类型是第一道防线。
+* text=auto
+
+# 明确按文本处理（含中文的源码/文档不要被内容嗅探成 binary）
+*.py      text
+*.js      text
+*.mjs     text
+*.vue     text
+*.html    text
+*.css     text
+*.svg     text
+*.json    text
+*.md      text
+*.txt     text
+*.res     text
+*.h       text
+*.cpp     text
+*.yml     text
+*.toml    text
+Makefile  text
+
+# 明确按二进制处理：永不做换行转换
+*.bin     binary
+*.ico     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.pdf     binary
+*.exe     binary
+*.dll     binary
+*.so      binary
+*.dylib   binary
+*.nbi     binary
+*.nbc     binary
+
+# 构建脚本必须保持 LF，否则 sh 无法执行
+*.sh      text eol=lf

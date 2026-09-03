@@ -1,9 +1,13 @@
-.claude
-.vscode
+# 编辑器与本地助手状态
+/.claude/
+/.vscode/
 
-__pycache__
+# Python 缓存
+__pycache__/
+*.py[cod]
 
-bin
-dist
-frontend/node_modules
-frontend/dist
+# 打包与前端产物（锚定路径，不用裸 bin / dist）
+/bin/
+/dist/
+/frontend/node_modules/
+/frontend/dist/
