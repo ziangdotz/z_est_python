@@ -2,133 +2,296 @@
 
 from __future__ import annotations
 
+from typing import Sequence, Union
+
 import numpy as np
 
 from ._config import B_len, MAX_DICTIONARY_SIZE
+from ._jit import Kernel, use_jit
+from ._types import PostfixDictionary
 from ._util import prediction_estimate
 
+_ArrayLike = Union[np.ndarray, Sequence[int]]
 
-def binary_lz78y_test(
-    data: np.ndarray, length: int,
-    verbose: int = 0, label: str = ""
-) -> float:
+
+def _as_bytes(data: _ArrayLike, length: int) -> bytes:
     """
-    Section 6.3.10: LZ78Y Test (binary optimized).
-    Uses 16 context-length dictionaries with [count_0, count_1] entries.
+    Symbol stream as ``bytes``.
+
+    The tests walk the alphabet one symbol at a time; indexing a numpy array
+    costs several times more than indexing a ``bytes`` object, and the symbol
+    values always fit in a byte (alph_size <= 256).
+    """
+    if isinstance(data, np.ndarray):
+        return data[:length].tobytes()
+    return bytes(data[:length])
+
+
+def _binary_lz78y_counts(s: bytes, length: int) -> tuple:
+    """
+    The binary LZ78Y prediction loop, returning ``(correct_count, max_run)``.
+
+    Unlike MultiMMC, LZ78Y queries every context length from the longest one
+    down to a single bit, keeps *all* of them (a miss on a long context does
+    not stop the shorter ones) and predicts with the context that has the
+    largest count. One dictionary budget is shared by every length.
+
+    ``binary_dict[j - 1]`` is the table for the ``j``-bit contexts, addressed
+    with the *newest* symbol in bit 0, so the whole j-loop only needs one
+    rolling register instead of re-reading j symbols per context.
+
+    This is the CPython version: the per-length tables are lists of lists and
+    every counter access is a plain Python integer operation.
     """
     B = B_len
-    scoreboard = [0] * B
-    binary_dict = [np.zeros(1 << (d + 2), dtype=np.int64) for d in range(B)]
-    dict_elems = [0] * B
-    winner = 0
 
-    cur_pattern = 0
-    for d in range(B):
-        cur_pattern = (cur_pattern << 1) | (int(data[d]) & 1)
-        idx = (cur_pattern << 1) | (int(data[d + 1]) & 1)
-        binary_dict[d][idx] = 1
-        dict_elems[d] = 1
+    binary_dict = [[0] * (1 << (j + 2)) for j in range(B)]
+    masks = [(1 << j) - 1 for j in range(B + 1)]
+    full_mask = masks[B]
+    dict_elems = 0
+
+    # Initialize with (S[B-1]) -> S[B], (S[B-2], S[B-1]) -> S[B], ...
+    init_window = 0
+    for j in range(B):
+        init_window = (init_window << 1) | (s[j] & 1)
+
+    for j in range(1, B + 1):
+        binary_dict[j - 1][((init_window & masks[j]) << 1) | (s[B] & 1)] = 1
+        dict_elems += 1
 
     correct_count = 0
     cur_run = 0
     max_run = 0
 
-    for i in range(2, length):
-        cur_winner = winner
-        cur_pattern = 0
-        found_x = False
+    # i is the index of the bit to be predicted; bit j of ``window`` holds
+    # S[i-1-j], which is exactly the reference's compressedBitSymbols() window.
+    # The first prediction covers S[1]...S[B].
+    window = ((init_window << 1) | (s[B] & 1)) & full_mask
 
-        for d in range(B):
-            if d > i - 2:
-                break
-            cur_pattern |= (int(data[i - d - 1]) & 1) << d
+    for i in range(B + 1, length):
+        sym = s[i] & 1
+        have_prediction = False
+        cur_prediction = 2
+        max_count = 0
 
-            entry = binary_dict[d]
+        for j in range(B, 0, -1):
+            entry = binary_dict[j - 1]
+            pos = (window & masks[j]) << 1
 
-            if d == 0 or found_x:
-                idx = cur_pattern << 1
-                c0 = entry[idx]
-                c1 = entry[idx + 1]
-                if c0 > c1:
-                    cur_prediction = 0
-                    cur_count = c0
-                else:
-                    cur_prediction = 1
-                    cur_count = c1
-                found_x = cur_count > 0
+            c0 = entry[pos]
+            c1 = entry[pos + 1]
+            if c0 > c1:
+                round_prediction = 0
+                cur_count = c0
+            else:
+                round_prediction = 1
+                cur_count = c1
 
-            if found_x:
-                cur_sym = int(data[i]) & 1
-                if cur_prediction == cur_sym:
-                    scoreboard[d] += 1
-                    if scoreboard[d] >= scoreboard[winner]:
-                        winner = d
-                    if d == cur_winner:
-                        correct_count += 1
-                        cur_run += 1
-                        if cur_run > max_run:
-                            max_run = cur_run
-                elif d == cur_winner:
-                    cur_run = 0
+            if cur_count != 0:
+                # x is present in the dictionary as a prefix
+                if cur_count > max_count:
+                    max_count = cur_count
+                    have_prediction = True
+                    cur_prediction = round_prediction
+                entry[pos | sym] += 1
+            elif dict_elems < MAX_DICTIONARY_SIZE:
+                entry[pos | sym] = 1
+                dict_elems += 1
 
-                entry[(cur_pattern << 1) | cur_sym] += 1
-            elif dict_elems[d] < MAX_DICTIONARY_SIZE:
-                entry[(cur_pattern << 1) | (int(data[i]) & 1)] = 1
-                dict_elems[d] += 1
+        if have_prediction and cur_prediction == sym:
+            correct_count += 1
+            cur_run += 1
+            if cur_run > max_run:
+                max_run = cur_run
+        else:
+            cur_run = 0
 
-    return prediction_estimate(correct_count, length - 2, max_run, 2, "LZ78Y", verbose, label)
+        window = ((window << 1) | sym) & full_mask
+
+    return correct_count, max_run
+
+
+@Kernel
+def _binary_lz78y_kernel(bits, length):
+    """
+    Same loop as :func:`_binary_lz78y_counts`, written so that numba can
+    compile it: the ``B`` tables are flattened into one ``int64`` array, since
+    a numba array of arrays would box on every access. ``bits`` is the same
+    buffer :func:`_as_bytes` produced, taken as a read-only uint8 view.
+
+    The two bodies have to stay in lockstep - ``est_test_nist_cpp_recode/
+    jit_crosscheck.py`` checks that they do.
+    """
+    B = B_len
+
+    # binary_dict[j - 1] occupies the slice starting at sum_{e<j} 2^(e+2) = 2^(j+2) - 8
+    offsets = np.empty(B, dtype=np.int64)
+    for j in range(1, B + 1):
+        offsets[j - 1] = (1 << (j + 2)) - 8
+
+    binary_dict = np.zeros((1 << (B + 3)) - 8, dtype=np.int64)
+    masks = np.empty(B + 1, dtype=np.int64)
+    for j in range(B + 1):
+        masks[j] = (1 << j) - 1
+    full_mask = masks[B]
+    dict_elems = 0
+
+    init_window = 0
+    for j in range(B):
+        init_window = (init_window << 1) | (int(bits[j]) & 1)
+
+    for j in range(1, B + 1):
+        binary_dict[offsets[j - 1] + (((init_window & masks[j]) << 1) | (int(bits[B]) & 1))] = 1
+        dict_elems += 1
+
+    correct_count = 0
+    cur_run = 0
+    max_run = 0
+    window = ((init_window << 1) | (int(bits[B]) & 1)) & full_mask
+
+    for i in range(B + 1, length):
+        sym = int(bits[i]) & 1
+        have_prediction = False
+        cur_prediction = 2
+        max_count = 0
+
+        for j in range(B, 0, -1):
+            base = offsets[j - 1]
+            pos = (window & masks[j]) << 1
+
+            c0 = binary_dict[base + pos]
+            c1 = binary_dict[base + pos + 1]
+            if c0 > c1:
+                round_prediction = 0
+                cur_count = c0
+            else:
+                round_prediction = 1
+                cur_count = c1
+
+            if cur_count != 0:
+                if cur_count > max_count:
+                    max_count = cur_count
+                    have_prediction = True
+                    cur_prediction = round_prediction
+                binary_dict[base + (pos | sym)] += 1
+            elif dict_elems < MAX_DICTIONARY_SIZE:
+                binary_dict[base + (pos | sym)] = 1
+                dict_elems += 1
+
+        if have_prediction and cur_prediction == sym:
+            correct_count += 1
+            cur_run += 1
+            if cur_run > max_run:
+                max_run = cur_run
+        else:
+            cur_run = 0
+
+        window = ((window << 1) | sym) & full_mask
+
+    return correct_count, max_run
+
+
+def binary_lz78y_test(
+    data: _ArrayLike, length: int,
+    verbose: int = 0, label: str = ""
+) -> float:
+    """
+    Section 6.3.10: LZ78Y Test (binary optimized), matching
+    ``binaryLZ78YPredictionEstimate()``.
+
+    Both paths below count the same predictions; only the estimate step is shared.
+    """
+    assert length > B_len, "LZ78Y needs more than B_len samples"
+    assert length - B_len > 2
+    assert B_len < 32  # B < 32 so the reference's shifts stay well defined
+
+    B = B_len
+    s = _as_bytes(data, length)
+    if use_jit(length):
+        correct_count, max_run = _binary_lz78y_kernel(
+            np.frombuffer(s, dtype=np.uint8), length)
+    else:
+        correct_count, max_run = _binary_lz78y_counts(s, length)
+
+    return prediction_estimate(correct_count, length - B - 1, max_run, 2, "LZ78Y", verbose, label)
 
 
 def lz78y_test(
-    data: np.ndarray, length: int, alph_size: int,
+    data: _ArrayLike, length: int, alph_size: int,
     verbose: int = 0, label: str = ""
 ) -> float:
     """
     Section 6.3.10: LZ78Y Test (general alphabet).
+
+    Matching ``LZ78Y_test()`` in ``lz78y_test.h``, one map per context length
+    ``j`` holds the observed contexts and their :class:`PostfixDictionary` of
+    continuations. Contexts are packed into an integer with the newest symbol
+    in the low byte, a bijection for the fixed length of each map.
     """
     if alph_size == 2:
         return binary_lz78y_test(data, length, verbose, label)
 
-    from ._types import PostfixDictionary
+    if length < B_len + 2:
+        print(f"\t*** Warning: not enough samples to run LZ78Y test (need more than {B_len + 2}) ***")
+        return -1.0
 
     B = B_len
-    scoreboard = [0] * B
-    dicts = [PostfixDictionary() for _ in range(B)]
-    winner = 0
+    s = _as_bytes(data, length)
 
-    correct_count = 0
-    cur_run = 0
-    max_run = 0
+    N = length - B - 1
+    D = [dict() for _ in range(B)]
+    masks = [(1 << (8 * j)) - 1 for j in range(B + 1)]
+    full_mask = masks[B]
 
-    for i in range(1, length):
-        cur_winner = winner
-        found_x = False
-        cur_prediction = 0
-        cur_count = 0
+    C = 0
+    run_len = 0
+    max_run_len = 0
 
-        for d in range(B):
-            if d > i - 1:
-                break
+    # Initialize the dictionary with (S[B-1]) -> S[B], ..., (S[0]...S[B-1]) -> S[B]
+    dict_size = 0
+    init_window = 0
+    for j in range(B):
+        init_window = (init_window << 8) | s[j]
 
-            if d == 0 or found_x:
-                cur_count, cur_prediction = dicts[d].predict()
-                found_x = cur_count > 0
+    for j in range(1, B + 1):
+        D[j - 1].setdefault(init_window & masks[j], PostfixDictionary()).increment_postfix(s[B], True)
+        dict_size += 1
 
-            if found_x:
-                if cur_prediction == int(data[i]):
-                    scoreboard[d] += 1
-                    if scoreboard[d] >= scoreboard[winner]:
-                        winner = d
-                    if d == cur_winner:
-                        correct_count += 1
-                        cur_run += 1
-                        if cur_run > max_run:
-                            max_run = cur_run
-                elif d == cur_winner:
-                    cur_run = 0
+    # i is the index of the symbol to be predicted; byte j of ``window`` holds
+    # S[i-1-j]. The first prediction covers S[1]...S[B].
+    window = ((init_window << 8) | s[B]) & full_mask
 
-                dicts[d].increment_postfix(int(data[i]), True)
-            else:
-                dicts[d].increment_postfix(int(data[i]), True)
+    for i in range(B + 1, length):
+        sym = s[i]
+        have_prediction = False
+        prediction = 0
+        max_count = 0
 
-    return prediction_estimate(correct_count, length - 1, max_run, alph_size, "LZ78Y", verbose, label)
+        for j in range(B, 0, -1):
+            key = window & masks[j]
+            curp = D[j - 1].get(key)
+
+            if curp is not None:
+                # x has occurred; the prediction is the most likely postfix.
+                count, y = curp.predict()
+                if count > max_count:
+                    max_count = count
+                    prediction = y
+                    have_prediction = True
+                # x exists as a prefix, so (x, y) is always counted.
+                curp.increment_postfix(sym, True)
+            elif dict_size < MAX_DICTIONARY_SIZE:
+                D[j - 1].setdefault(key, PostfixDictionary()).increment_postfix(sym, True)
+                dict_size += 1
+
+        if have_prediction and prediction == sym:
+            C += 1
+            run_len += 1
+            if run_len > max_run_len:
+                max_run_len = run_len
+        else:
+            run_len = 0
+
+        window = ((window << 8) | sym) & full_mask
+
+    return prediction_estimate(C, N, max_run_len, alph_size, "LZ78Y", verbose, label)

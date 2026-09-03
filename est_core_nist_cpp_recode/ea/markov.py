@@ -20,9 +20,9 @@ def markov_test(
     c00 = int(np.sum((data[:length - 1] == 0) & (data[1:length] == 0)))
     c10 = int(np.sum((data[:length - 1] == 1) & (data[1:length] == 0)))
 
-    p0 = c0 / length
-    p1 = 1.0 - p0
-
+    # The transition probabilities come from the counts *before* the last symbol
+    # joins in: ``C_0``/``C_1`` cover S[0..len-2], which is exactly the set of
+    # symbols that have a successor.
     if c0 > 0:
         p00 = c00 / c0
         p01 = 1.0 - p00
@@ -34,6 +34,15 @@ def markov_test(
         p11 = 1.0 - p10
     else:
         p10 = p11 = 0.0
+
+    # Only then does the reference "account for the last symbol" when it turns
+    # the count into the unconditional probability, so P_0 spans all ``length``
+    # samples while P_01/P_10 span ``length - 1``.
+    if data[length - 1] == 0:
+        c0 += 1
+
+    p0 = c0 / length
+    p1 = 1.0 - p0
 
     h_min = 128.0
 
@@ -58,12 +67,23 @@ def markov_test(
     ent_est = min(h_min / 128.0, 1.0)
 
     if verbose == 2:
-        print(f"{label} Markov Estimate: h_min = {h_min:.17g}, entropy/bit = {ent_est:.17g}")
+        print(f"{label} Markov Estimate: P_0 = {p0:.17g}, P_1 = {p1:.17g}, "
+              f"P_0,0 = {p00:.17g}, P_0,1 = {p01:.17g}, "
+              f"P_1,0 = {p10:.17g}, P_1,1 = {p11:.17g}, ", end="")
     elif verbose == 3:
-        print(f"{label} Markov Estimate: p0 = {p0:.17g}, p1 = {p1:.17g}")
-        print(f"{label} Markov Estimate: p00 = {p00:.17g}, p01 = {p01:.17g}")
-        print(f"{label} Markov Estimate: p10 = {p10:.17g}, p11 = {p11:.17g}")
-        print(f"{label} Markov Estimate: h_min = {h_min:.17g}")
+        print(f"{label} Markov Estimate: P_0 = {p0:.17g}")
+        print(f"{label} Markov Estimate: P_1 = {p1:.17g}")
+        print(f"{label} Markov Estimate: P_{{0,0}} = {p00:.17g}")
+        print(f"{label} Markov Estimate: P_{{0,1}} = {p01:.17g}")
+        print(f"{label} Markov Estimate: P_{{1,0}} = {p10:.17g}")
+        print(f"{label} Markov Estimate: P_{{1,1}} = {p11:.17g}")
+
+    # The reference reports the tightest of the six candidate sequences through
+    # its probability rather than through its length: p-hat_max = 2**-H_min.
+    if verbose == 2:
+        print(f"p_max = {2.0 ** -h_min:.17g}")
+    elif verbose == 3:
+        print(f"{label} Markov Estimate: p-hat_max = {2.0 ** -h_min:.17g}")
         print(f"{label} Markov Estimate: min entropy = {ent_est:.17g}")
 
     return ent_est

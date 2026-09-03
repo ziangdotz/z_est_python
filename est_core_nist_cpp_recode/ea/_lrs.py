@@ -16,58 +16,96 @@ def sa_to_lcp(text: np.ndarray, n: int, sa: np.ndarray) -> np.ndarray:
     """
     Kasai et al. O(n) LCP construction.
     Matches C++ sa2lcp32/sa2lcp64 in lrs_test.h.
-    """
-    rank = np.full(n + 1, -1, dtype=np.int64)
-    for i in range(n + 1):
-        rank[sa[i]] = i
 
-    lcp = np.full(n + 1, -1, dtype=np.int64)
+    The suffix comparisons run over plain Python lists: `text` arrives as a
+    uint8 array, and a per-element numpy lookup costs several times what the
+    list indexing costs while the whole loop touches every sample.
+    """
+    rank = np.empty(n + 1, dtype=np.int64)
+    rank[sa] = np.arange(n + 1)
+
+    t = text[:n].tolist()
+    s = sa.tolist()
+    r = rank.tolist()
+
+    # Only slot 0 keeps its initial value: the empty suffix sits at s[0], so
+    # every other slot is the rank of some sample and gets written below.
+    lcp = [0] * (n + 1)
     lcp[0] = -1
-    lcp[1] = 0
 
     h = 0
     for i in range(n):
-        k = rank[i]
+        k = r[i]
         if k > 1:
-            j = sa[k - 1]
-            while (i + h < n) and (j + h < n) and text[i + h] == text[j + h]:
+            j = s[k - 1]
+            while (i + h < n) and (j + h < n) and t[i + h] == t[j + h]:
                 h += 1
             lcp[k] = h
         if h > 0:
             h -= 1
-    return lcp
+    return np.array(lcp, dtype=np.int64)
 
 
 def build_suffix_array(text: np.ndarray, n: int) -> np.ndarray:
     """
-    Build suffix array using prefix doubling algorithm.
-    O(n log^2 n) time, O(n) space. Memory efficient for large n (~1M).
+    Suffix array of ``text[:n]`` plus the empty suffix at position ``n``, which
+    sorts first - the layout the reference gets out of divsufsort and what
+    :func:`sa_to_lcp` expects. Index ``n`` is therefore ``sa[0]``.
+
+    Prefix doubling (Manber-Myers): ``rank`` holds the order of the length-``k``
+    prefixes, and sorting by the pair ``(rank[i], rank[i + k])`` resolves twice
+    as much, so ``ceil(log2(n))`` rounds suffice - far fewer in practice, since
+    the round after which every suffix is separated already yields the final
+    order. The pair fits in one ``int64`` key as long as both components stay
+    inside ``[-1, n]``: packing with base ``n + 2`` keeps the lexicographic
+    order and lets a single argsort do the work.
+
+    O(n log n) time with a vectorised body, O(n) space.
     """
-    # Initial ranks from text values. Index n is the empty suffix (smallest).
-    rank = text.tolist()
-    rank.append(-1)
-    
-    sa = list(range(n + 1))
+    if n == 0:
+        return np.array([0], dtype=np.int64)
+
+    m = n + 1
+    rank = np.empty(m, dtype=np.int64)
+    rank[:n] = text[:n]
+    rank[n] = -1  # the empty suffix is smaller than any symbol
+    # A wider alphabet than sample count breaks the packing bound above, so give
+    # such inputs dense ranks first; the remap in `read_file` keeps this rare.
+    if int(rank[:n].max()) >= n:
+        rank[:n] = np.unique(text[:n], return_inverse=True)[1]
+
+    second = np.empty(m, dtype=np.int64)
+    key = np.empty(m, dtype=np.int64)
+
     k = 1
     while k <= n:
-        # Sort by (rank[i], rank[i+k])
-        sa.sort(key=lambda i: (rank[i], rank[i + k] if i + k <= n else -1))
-        
-        # Recompute ranks based on sorted order
-        new_rank = [0] * (n + 1)
-        for i in range(1, n + 1):
-            prev, curr = sa[i-1], sa[i]
-            prev_key = (rank[prev], rank[prev + k] if prev + k <= n else -1)
-            curr_key = (rank[curr], rank[curr + k] if curr + k <= n else -1)
-            new_rank[curr] = new_rank[prev] + (1 if prev_key != curr_key else 0)
-        rank = new_rank
-        
-        # If all ranks are distinct, sorting is complete
+        # second[i] = rank[i + k], or -1 where the prefix runs past the sample
+        second.fill(-1)
+        if k < m:
+            second[:m - k] = rank[k:]
+        np.multiply(rank, m + 1, out=key)
+        key += second
+        key += 1
+
+        # Tied keys receive one and the same rank, so the round's outcome does
+        # not depend on the order within a tie - which frees the faster,
+        # unstable introsort (~6x the cost of a stable sort on these keys)
+        sa = np.argsort(key)
+
+        # New ranks walk the sorted order, stepping up whenever the pair changes
+        sorted_key = key[sa]
+        rank = np.empty(m, dtype=np.int64)
+        rank[sa] = np.concatenate((
+            np.zeros(1, dtype=np.int64),
+            np.cumsum(sorted_key[1:] != sorted_key[:-1]),
+        ))
+
+        # If all ranks are distinct, the order is final
         if rank[sa[n]] == n:
             break
         k <<= 1
-        
-    return np.array(sa, dtype=np.int64)
+
+    return sa
 
 
 def sa_algs(
@@ -79,17 +117,18 @@ def sa_algs(
     Uses Python int for arbitrary precision (replaces uint128_t).
     """
     sa = build_suffix_array(text, n)
-    L = sa_to_lcp(text, n, sa)
+    L = sa_to_lcp(text, n, sa).tolist()
 
-    L = L.tolist()
+    # The reference reads the LCP array one slot over - entry i holds what
+    # sa_to_lcp reported for slot i + 1 - and closes the list with a 0 for the
+    # slot past its end. Dropping the leading slot in place avoids a second
+    # n + 1 element copy, and that trailing 0 is why the maxima below may run
+    # over the whole list: every real entry is >= 0.
+    del L[0]
     L.append(0)
-    L = L[1:]
     assert L[0] == 0
 
-    v = 0
-    for i in range(n):
-        if L[i] > v:
-            v = L[i]
+    v = max(L)
 
     if v == 0:
         if verbose > 1:

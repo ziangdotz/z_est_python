@@ -18,8 +18,12 @@ def most_common_value(
     """
     Section 6.3.1: Most Common Value Estimate.
     Returns min-entropy = -log2(p_u).
+
+    ``length`` is the number of samples to count: the caller may hand over a
+    longer buffer than it wants assessed (`-t` truncates the bit string), so
+    the histogram has to be built from the leading ``length`` symbols only.
     """
-    counts = np.bincount(data.astype(np.int64), minlength=alph_size)
+    counts = np.bincount(np.ascontiguousarray(data[:length], dtype=np.int64), minlength=alph_size)
     mode = int(np.max(counts))
     p_hat = mode / length
     p_u = min(1.0, p_hat + ZALPHA * math.sqrt(p_hat * (1.0 - p_hat) / (length - 1.0)))
@@ -32,11 +36,11 @@ def most_common_value(
     ent_est = -math.log2(p_u)
 
     if verbose == 2:
-        print(f"{label} MCV Estimate: mode = {mode}, p_hat = {p_hat:.17g}, p_u = {p_u:.17g}")
+        print(f"{label} MCV Estimate: mode = {mode}, p-hat = {p_hat:.17g}, p_u = {p_u:.17g}")
     elif verbose == 3:
-        print(f"{label} MCV Estimate: mode = {mode}")
-        print(f"{label} MCV Estimate: p_hat = {p_hat:.17g}")
-        print(f"{label} MCV Estimate: p_u = {p_u:.17g}")
-        print(f"{label} MCV Estimate: min entropy = {ent_est:.17g}")
+        print(f"{label} Most Common Value Estimate: Mode count = {mode}")
+        print(f"{label} Most Common Value Estimate: p-hat = {p_hat:.17g}")
+        print(f"{label} Most Common Value Estimate: p_u = {p_u:.17g}")
+        print(f"{label} Most Common Value Estimate: min entropy = {ent_est:.17g}")
 
     return ent_est

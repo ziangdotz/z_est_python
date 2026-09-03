@@ -5,41 +5,45 @@ from __future__ import annotations
 import math
 import os
 from concurrent.futures import ProcessPoolExecutor
+from itertools import repeat
 from typing import Optional
 
 import numpy as np
 
-from ._config import DEFAULT_SIM_ROUNDS, MIN_SIZE, ZALPHA
+from ._config import DEFAULT_SIM_ROUNDS, MIN_SIZE
 from ._io import free_data, read_file
-from ._rng import Xoshiro256StarStar
 from ._types import DataT
 from .mcv import most_common_value
 
+# The reference reseeds xoshiro from system entropy on every run, which makes
+# X_cutoff unreproducible; a fixed seed keeps a run repeatable instead.
+_SIM_BASE_SEED = 0x5EED0001
+# multinomial() is chunked so its int64 buffer stays around 16 MB
+_SIM_CELLS_PER_CHUNK = 2_000_000
 
-def simulate_count(k_effective: int, p: float, seed: list[int]) -> int:
+
+def _simulate_rows(num_rounds: int, k_effective: int, p: float, seed) -> np.ndarray:
     """
-    Simulate one row (1000 i.i.d. samples), return max symbol count.
-    Distribution: floor(1/p) symbols each with prob p, remainder to one symbol.
+    ``num_rounds`` simulated rows: the largest symbol count in 1000 draws.
+
+    ``simulateCount()`` maps every uniform draw to ``floor(U / p)``, which
+    splits [0, 1) into ``floor(1/p)`` intervals of width p plus one residual
+    interval of width ``1 - floor(1/p) * p``. A row is therefore exactly one
+    multinomial trial with those probabilities, and numpy samples that (BTDC,
+    no normal approximation) thousands of times faster than a per-symbol loop.
     """
-    rng = Xoshiro256StarStar(np.array(seed, dtype=np.uint64))
-    counts = np.zeros(k_effective, dtype=np.uint16)
-    for _ in range(1000):
-        idx = int(math.floor(rng.random_unit() / p))
-        if idx >= k_effective:
-            idx = k_effective - 1
-        counts[idx] += 1
-    return int(np.max(counts))
+    probs = np.full(k_effective, p)
+    probs[-1] = 1.0 - (k_effective - 1) * p
 
+    rng = np.random.default_rng(seed)
+    out = np.empty(num_rounds, dtype=np.uint16)
+    chunk = max(1, _SIM_CELLS_PER_CHUNK // k_effective)
 
-def simulate_batch(
-    num_rounds: int, k_effective: int, p: float, base_seed: list[int]
-) -> list[int]:
-    """Run a batch of simulation rounds."""
-    results = []
-    for i in range(num_rounds):
-        seed = [(s + i * 7 + 13) & 0xFFFFFFFFFFFFFFFF for s in base_seed]
-        results.append(simulate_count(k_effective, p, seed))
-    return results
+    for start in range(0, num_rounds, chunk):
+        stop = min(start + chunk, num_rounds)
+        out[start:stop] = rng.multinomial(1000, probs, size=stop - start).max(axis=1)
+
+    return out
 
 
 def simulate_bound(
@@ -56,43 +60,40 @@ def simulate_bound(
 
     if num_workers is None:
         num_workers = os.cpu_count() or 1
+    num_workers = max(1, min(num_workers, simulation_rounds))
 
-    base_seed = [0x1234567890ABCDEF, 0xFEDCBA0987654321,
-                 0x1111111111111111, 0x2222222222222222]
+    # One independent stream per worker - the reference reaches the same
+    # separation with xoshiro_jump(thread_num * 2^128) - and an exact split of
+    # the rounds: every round has to be simulated once and only once, or the
+    # quantile below is taken from the wrong number of samples.
+    children = np.random.SeedSequence(_SIM_BASE_SEED).spawn(num_workers)
+    base, extra = divmod(simulation_rounds, num_workers)
+    rounds = [base + (1 if w < extra else 0) for w in range(num_workers)]
 
-    batch_size = simulation_rounds // num_workers
-    if batch_size == 0:
-        batch_size = 1
+    if num_workers == 1:
+        parts = [_simulate_rows(rounds[0], k_effective, p, children[0])]
+    else:
+        with ProcessPoolExecutor(max_workers=num_workers) as ex:
+            parts = list(ex.map(_simulate_rows, rounds, repeat(k_effective), repeat(p), children))
 
-    with ProcessPoolExecutor(max_workers=num_workers) as ex:
-        futures = []
-        for _ in range(num_workers):
-            futures.append(ex.submit(simulate_batch, batch_size, k_effective, p, base_seed))
-
-        results = []
-        for f in futures:
-            results.extend(f.result())
+    results = np.concatenate(parts)
+    assert results.size == simulation_rounds
 
     results.sort()
+    # Same sanity bounds the reference asserts on the simulated extremes.
+    assert (1000 // k) <= results[0] <= results[-1] <= 1000
+
     return_index = int(math.floor((1.0 - alpha) * simulation_rounds)) - 1
-    if return_index < 0:
-        return_index = 0
-    if return_index >= len(results):
-        return_index = len(results) - 1
-    return results[return_index]
+    return_index = min(max(return_index, 0), results.size - 1)
+    return int(results[return_index])
 
 
 def max_count_in_rows(data: np.ndarray, rows: int, cols: int, alph_size: int) -> int:
     """Find the maximum symbol count across all rows."""
-    max_count = 0
-    for r in range(rows):
-        counts = np.zeros(alph_size, dtype=np.int64)
-        for c in range(cols):
-            counts[int(data[r * cols + c])] += 1
-        row_max = int(np.max(counts))
-        if row_max > max_count:
-            max_count = row_max
-    return max_count
+    syms = data[:rows * cols].astype(np.int64)
+    offsets = np.repeat(np.arange(rows, dtype=np.int64) * alph_size, cols)
+    hist = np.bincount(syms + offsets, minlength=rows * alph_size).reshape(rows, alph_size)
+    return int(hist.max())
 
 
 def restart_test(
@@ -117,12 +118,10 @@ def restart_test(
         raise RuntimeError("Alphabet size must be > 1")
 
     r, c = 1000, 1000
-    rdata = dp.symbols.copy()
+    rdata = dp.symbols
 
-    cdata = np.zeros(dp.len, dtype=np.uint8)
-    for j in range(c):
-        for i in range(r):
-            cdata[j * r + i] = rdata[i * c + j]
+    # cdata[j * r + i] = rdata[i * c + j], i.e. the sample matrix transposed
+    cdata = rdata.reshape(r, c).T.reshape(-1)
 
     alpha = 1.0 - math.exp(math.log(0.99) / (r + c))
     X_cutoff = simulate_bound(alpha, dp.alph_size, H_I, simulation_rounds)

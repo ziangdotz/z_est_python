@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import datetime
-import hashlib
 import sys
 from typing import Optional
 
 import numpy as np
 
 from ._config import MIN_SIZE
-from ._io import free_data, read_file, read_file_subset
+from ._io import file_sha256, free_data, read_file, read_file_subset
 from ._types import DataT, IidTestCase, IidTestRun
 from ._util import calc_stats
 from .chi_square import chi_square_tests
@@ -25,10 +24,14 @@ def run_iid_test(
     initial: bool = True,
     all_bits: bool = True,
     verbose: int = 1,
+    num_workers: Optional[int] = None,
 ) -> IidTestRun:
     """
     Run the full IID entropy assessment pipeline.
     Matches C++ iid_main.cpp logic.
+
+    ``num_workers`` bounds the processes the permutation test may spread its
+    rounds over; ``None`` uses one per physical core.
     """
     run = IidTestRun()
     run.timestamp = datetime.datetime.now().isoformat()
@@ -36,21 +39,28 @@ def run_iid_test(
     run.filename = file_path
     run.type = "IID"
 
-    try:
-        with open(file_path, 'rb') as f:
-            run.sha256 = hashlib.sha256(f.read()).hexdigest()
-    except Exception:
-        run.sha256 = ""
+    run.sha256 = file_sha256(file_path)
 
     dp = DataT(word_size=bits_per_symbol)
     if not read_file(file_path, dp, run):
         return run
 
-    if dp.len < MIN_SIZE:
+    # A single-symbol alphabet carries no entropy to assess; the reference
+    # (`iid_main.cpp`) reports it as an error and stops.
+    if dp.alph_size <= 1:
         run.error_level = -1
-        run.error_msg = f"Data too short: {dp.len} < {MIN_SIZE}"
+        run.error_msg = "Symbol alphabet consists of 1 symbol. No entropy awarded..."
+        print(run.error_msg)
         free_data(dp)
         return run
+
+    if not all_bits and dp.blen > MIN_SIZE:
+        dp.blen = MIN_SIZE
+
+    # Anything below MIN_SIZE samples is merely a warning: the assessment is
+    # less reliable, but the reference still runs every estimate on it.
+    if dp.len < MIN_SIZE:
+        print(f"\n*** Warning: data contains less than {MIN_SIZE} samples ***\n")
 
     rawmean, median = calc_stats(dp)
     binary = dp.alph_size == 2
@@ -80,17 +90,16 @@ def run_iid_test(
     tc.ret_min_entropy = h_original
     print(f"H_original: {h_original}")
 
-    if all_bits:
-        bit_len = dp.blen
-        bit_data = dp.bsymbols
-    else:
-        bit_len = min(dp.blen, 1_000_000)
-        bit_data = dp.bsymbols[:bit_len]
+    # ``dp.blen`` already reflects the `-a`/`-t` choice made above; the bit
+    # buffer itself is never trimmed, so hand the estimate a view of the prefix
+    # that is to be assessed.
+    bit_len = dp.blen
+    bit_data = dp.bsymbols[:bit_len]
 
     h_bitstring = most_common_value(bit_data, bit_len, 2, verbose, "")
     print(f"H_bitstring: {h_bitstring}")
 
-    perm_passed = permutation_tests(dp, rawmean, median, verbose, tc)
+    perm_passed = permutation_tests(dp, rawmean, median, verbose, tc, num_workers=num_workers)
     tc.passed_iid_permutation_tests = perm_passed
     print(f"IID Permutation Tests: {'Passed' if perm_passed else 'Failed'}")
 
@@ -111,6 +120,7 @@ def run_iid_test_subset(
     subset_size: int,
     bits_per_symbol: int = 0,
     verbose: int = 1,
+    num_workers: Optional[int] = None,
 ) -> IidTestRun:
     """Run IID test on a subset of the file."""
     run = IidTestRun()
@@ -144,7 +154,7 @@ def run_iid_test_subset(
 
     h_bitstring = most_common_value(dp.bsymbols, dp.blen, 2, verbose, "")
 
-    perm_passed = permutation_tests(dp, rawmean, median, verbose, tc)
+    perm_passed = permutation_tests(dp, rawmean, median, verbose, tc, num_workers=num_workers)
     tc.passed_iid_permutation_tests = perm_passed
 
     tc.h_original = h_original

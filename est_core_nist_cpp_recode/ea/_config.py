@@ -8,7 +8,6 @@ ITERMAX = 1076
 
 # Lag prediction test
 D_LAG = 128
-LAGMASK = D_LAG - 1  # 0x7F
 
 # MultiMMC test
 D_MMC = 16

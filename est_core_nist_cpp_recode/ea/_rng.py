@@ -24,26 +24,32 @@ class Xoshiro256StarStar:
 
     def __init__(self, seed: Optional[np.ndarray] = None):
         if seed is None:
-            self._state = np.frombuffer(os.urandom(32), dtype=np.uint64).copy()
+            raw = np.frombuffer(os.urandom(32), dtype=np.uint64)
         else:
-            self._state = seed.copy()
+            raw = np.asarray(seed, dtype=np.uint64)
+        # State lives in plain Python ints: next() is called millions of times per
+        # run and per-element numpy uint64 access costs several times more.
+        self._s = [int(v) & MASK64 for v in raw]
 
     @property
     def state(self) -> np.ndarray:
-        return self._state
+        return np.array(self._s, dtype=np.uint64)
 
     def next(self) -> int:
         """Returns a 64-bit random number, updates state."""
-        s = self._state
-        result = _rotl64(int(s[1]) * 5, 7) * 9 & MASK64
-        t = int(s[1]) << 17 & MASK64
+        s0, s1, s2, s3 = self._s
+        # `* 5` must wrap to 64 bits before the rotate, as it does in C++.
+        result = _rotl64((s1 * 5) & MASK64, 7) * 9 & MASK64
+        t = (s1 << 17) & MASK64
 
-        s[2] ^= s[0]
-        s[3] ^= s[1]
-        s[1] ^= s[2]
-        s[0] ^= s[3]
-        s[2] ^= t
-        s[3] = _rotl64(int(s[3]), 45)
+        s2 ^= s0
+        s3 ^= s1
+        s1 ^= s2
+        s0 ^= s3
+        s2 ^= t
+        s3 = _rotl64(s3, 45)
+
+        self._s = [s0, s1, s2, s3]
 
         return int(result)
 
@@ -51,6 +57,9 @@ class Xoshiro256StarStar:
         """
         Equivalent to count * 2^128 calls to next().
         Used to generate non-overlapping subsequences for parallel computations.
+
+        Matches ``xoshiro_jump()``: the accumulators span the whole scan and the
+        state is replaced only once, at the end.
         """
         s0 = 0
         s1 = 0
@@ -61,16 +70,13 @@ class Xoshiro256StarStar:
             for j in range(4):
                 for b in range(64):
                     if JUMP_CONSTANTS[j] & (1 << b):
-                        s0 ^= int(self._state[0])
-                        s1 ^= int(self._state[1])
-                        s2 ^= int(self._state[2])
-                        s3 ^= int(self._state[3])
+                        s0 ^= self._s[0]
+                        s1 ^= self._s[1]
+                        s2 ^= self._s[2]
+                        s3 ^= self._s[3]
                     self.next()
 
-            self._state[0] = s0 & MASK64
-            self._state[1] = s1 & MASK64
-            self._state[2] = s2 & MASK64
-            self._state[3] = s3 & MASK64
+        self._s = [s0, s1, s2, s3]
 
     def random_range64(self, s: int) -> int:
         """
@@ -100,12 +106,25 @@ class Xoshiro256StarStar:
         return (self.next() >> 11) * 1.1102230246251565e-16
 
     def fy_shuffle(self, data: np.ndarray, rawdata: np.ndarray) -> None:
-        """Fisher-Yates in-place shuffle: permutes data and rawdata identically."""
+        """
+        Fisher-Yates in-place shuffle: permutes data and rawdata identically.
+
+        Bit-identical to the C++ reference (same random stream, same swap order).
+        The swaps run on bytearray views because per-element numpy scalar access
+        costs roughly 5x more, and the sequence itself is unchanged.
+        """
         n = len(data)
+        d = bytearray(data)
+        rd = bytearray(rawdata)
+        rr = self.random_range64
+
         for i in range(n - 1, 0, -1):
-            r = self.random_range64(i)
-            data[i], data[r] = data[r], data[i]
-            rawdata[i], rawdata[r] = rawdata[r], rawdata[i]
+            r = rr(i)
+            d[i], d[r] = d[r], d[i]
+            rd[i], rd[r] = rd[r], rd[i]
+
+        data[:] = d
+        rawdata[:] = rd
 
 
 def fy_shuffle(data: np.ndarray, rawdata: np.ndarray, rng: Xoshiro256StarStar) -> None:
@@ -133,3 +152,15 @@ def create_parallel_rngs(
         rng.jump(t)
         rngs.append(rng)
     return rngs
+
+
+def random_permutation(n: int, rng: np.random.Generator) -> np.ndarray:
+    """
+    Uniform random permutation of [0, n).
+
+    Distribution-equivalent to :meth:`Xoshiro256StarStar.fy_shuffle` (both draw a
+    uniformly random permutation of the sample) but vectorized, and therefore not
+    reproducible against a C++ run. Pass an explicit ``seed`` to
+    :func:`numpy.random.default_rng` when a reproducible run is wanted.
+    """
+    return rng.permutation(n)

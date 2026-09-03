@@ -9,7 +9,6 @@ from ._types import (
     TestRunBase,
     IidTestRun,
     NonIidTestRun,
-    LagBuffer,
     PostfixDictionary,
 )
 
@@ -22,6 +21,5 @@ __all__ = [
     "TestRunBase",
     "IidTestRun",
     "NonIidTestRun",
-    "LagBuffer",
     "PostfixDictionary",
 ]

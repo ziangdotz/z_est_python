@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from typing import Optional
 
@@ -9,22 +10,60 @@ import numpy as np
 
 from ._types import DataT, TestRunBase
 
+_SHA256_CHUNK = 1 << 20
+
+
+def file_sha256(file_path: str) -> str:
+    """
+    SHA-256 of a file, streamed in chunks.
+
+    Reading the whole file into memory just to hash it doubles peak memory for
+    large samples, so hash incrementally instead. Returns "" on failure
+    (same convention the pipelines already use).
+    """
+    digest = hashlib.sha256()
+    try:
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(_SHA256_CHUNK)
+                if not chunk:
+                    break
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
 
 def _detect_word_size(symbols: np.ndarray) -> int:
     """
     Auto-detect word size by finding the highest bit in use.
-    Matches C++ logic: iterates from bit 7 down, finds first set bit.
+    Matches C++ logic: OR-reduce every symbol, then scan down from bit 7 until a
+    set bit is found. The scan is just the bit length of the OR-reduced mask.
     """
-    datamask = 0
-    for b in symbols:
-        datamask |= int(b)
+    if symbols.size == 0:
+        return 0
+    datamask = int(np.bitwise_or.reduce(symbols)) & 0xFF
+    return datamask.bit_length()
 
-    curbit = 0x80
-    i = 8
-    while i > 0 and (datamask & curbit) == 0:
-        curbit >>= 1
-        i -= 1
-    return i
+
+def _word_size_error(actual_width: int, dp: DataT, test_run: Optional[TestRunBase]) -> bool:
+    """
+    Validate a caller-supplied word size against the detected one.
+    Returns True if the data does not fit the described bit width.
+    """
+    if actual_width < dp.word_size:
+        if test_run:
+            test_run.error_msg = "Warning: Symbols appear to be narrower than described."
+    elif actual_width > dp.word_size:
+        if test_run:
+            test_run.error_level = -1
+            test_run.error_msg = (
+                f"Error: Incorrect bit width specification: "
+                f"Data ({actual_width}) does not fit within described "
+                f"bit width: {dp.word_size}."
+            )
+        return True
+    return False
 
 
 def _map_symbols(dp: DataT) -> None:
@@ -44,13 +83,12 @@ def _map_symbols(dp: DataT) -> None:
     # Update maxsymbol after masking
     dp.maxsymbol = int(np.max(dp.symbols))
 
-    # Build symbol_map_down_table
-    unique_vals = np.unique(dp.symbols)
-    dp.alph_size = len(unique_vals)
-
-    symbol_map = np.zeros(max_symbols, dtype=np.int32)
-    for new_idx, val in enumerate(unique_vals):
-        symbol_map[val] = new_idx
+    # Build symbol_map_down_table: every value actually present is ranked by how
+    # many present values precede it (C++ assigns alph_size++ while scanning the
+    # table upwards, which is the same ordering).
+    present = np.bincount(dp.symbols, minlength=max_symbols)[:max_symbols] > 0
+    dp.alph_size = int(present.sum())
+    symbol_map = np.cumsum(present, dtype=np.int32) - 1
 
     # Map down symbols
     dp.symbols = symbol_map[dp.symbols].astype(np.uint8)
@@ -60,11 +98,10 @@ def _map_symbols(dp: DataT) -> None:
     if dp.word_size == 1:
         dp.bsymbols = dp.symbols
     else:
-        dp.bsymbols = np.zeros(dp.blen, dtype=np.uint8)
-        for i in range(dp.len):
-            for j in range(dp.word_size):
-                dp.bsymbols[i * dp.word_size + j] = \
-                    (dp.rawsymbols[i] >> (dp.word_size - 1 - j)) & 0x1
+        # unpackbits() yields each byte MSB-first, so the low word_size bits of a
+        # symbol are the trailing columns of every row.
+        bits = np.unpackbits(dp.rawsymbols, bitorder='big').reshape(dp.len, 8)
+        dp.bsymbols = np.ascontiguousarray(bits[:, 8 - dp.word_size:]).reshape(-1)
 
 
 def read_file(
@@ -98,20 +135,16 @@ def read_file(
     # Detect/validate word size
     if dp.word_size == 0:
         dp.word_size = _detect_word_size(dp.symbols)
-    else:
-        actual_width = _detect_word_size(dp.symbols)
-        if actual_width < dp.word_size:
-            if test_run:
-                test_run.error_msg = "Warning: Symbols appear to be narrower than described."
-        elif actual_width > dp.word_size:
+        if dp.word_size == 0:
             if test_run:
                 test_run.error_level = -1
                 test_run.error_msg = (
-                    f"Error: Incorrect bit width specification: "
-                    f"Data ({actual_width}) does not fit within described "
-                    f"bit width: {dp.word_size}."
+                    f"Error: unable to determine word size for '{file_path}': "
+                    f"every input byte is zero."
                 )
             return False
+    elif _word_size_error(_detect_word_size(dp.symbols), dp, test_run):
+        return False
 
     _map_symbols(dp)
     return True
@@ -163,20 +196,16 @@ def read_file_subset(
 
     if dp.word_size == 0:
         dp.word_size = _detect_word_size(dp.symbols)
-    else:
-        actual_width = _detect_word_size(dp.symbols)
-        if actual_width < dp.word_size:
-            if test_run:
-                test_run.error_msg = "Warning: Symbols appear to be narrower than described."
-        elif actual_width > dp.word_size:
+        if dp.word_size == 0:
             if test_run:
                 test_run.error_level = -1
                 test_run.error_msg = (
-                    f"Error: Incorrect bit width specification: "
-                    f"Data ({actual_width}) does not fit within described "
-                    f"bit width: {dp.word_size}."
+                    f"Error: unable to determine word size for '{file_path}': "
+                    f"every input byte is zero."
                 )
             return False
+    elif _word_size_error(_detect_word_size(dp.symbols), dp, test_run):
+        return False
 
     _map_symbols(dp)
     return True

@@ -40,6 +40,8 @@ def get_parser():
     parser.add_argument("--non-iid", action="store_true", help="执行 Non-IID 测试")
     parser.add_argument("--h-i", type=float, default=None,
                         help="Restart 测试所需的初始熵估值 H_I")
+    parser.add_argument("-j", "--workers", type=int, default=None, metavar="N",
+                        help="并行进程数：IID 的置换轮次、Non-IID 的各估计器 (默认: 每个物理核 1 个, 1 = 关闭并行)")
     parser.add_argument("-v", "--verbose", action="count", default=1,
                         help="增加输出详细程度 (-v, -vv)")
     return parser
@@ -99,6 +101,7 @@ def run_est_test():
                 initial=True,
                 all_bits=True,
                 verbose=args.verbose,
+                num_workers=args.workers,
             )
             results["IID_Test"] = {"status": "pass", "data": run.to_dict()}
         except Exception as e:
@@ -115,6 +118,7 @@ def run_est_test():
                 file_path=args.datafile,
                 bits_per_symbol=args.bits,
                 verbose=args.verbose,
+                num_workers=args.workers,
             )
             results["Non_IID_Test"] = {"status": "pass", "data": run.to_dict()}
         except Exception as e:

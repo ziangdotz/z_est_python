@@ -24,9 +24,16 @@ def main():
     parser.add_argument("-t", "--truncate", action="store_false", dest="all_bits",
                         help="Truncate H_bitstring to first million bits")
     parser.add_argument("-v", "--verbose", action="count", default=1)
-    args = parser.parse_args()
-
+    parser.add_argument("-j", "--workers", type=int, default=None, metavar="N",
+                        help="processes for the permutation test rounds "
+                             "(default: one per physical core, 1 = no multiprocessing)")
+    # `set_defaults` rewrites the `default` of every action sharing the dest, and
+    # only actions registered so far are touched - hence the call before parsing.
+    # Without it, the two options on `initial`/`all_bits` would leave the *first*
+    # one's default (`store_true` -> False) in charge, silently truncating the bit
+    # string and labelling the run "Conditioned".
     parser.set_defaults(initial=True, all_bits=True)
+    args = parser.parse_args()
 
     run = run_iid_test(
         file_path=args.file,
@@ -34,6 +41,7 @@ def main():
         initial=args.initial,
         all_bits=args.all_bits,
         verbose=args.verbose,
+        num_workers=args.workers,
     )
 
     print(json.dumps(run.to_dict(), indent=2))

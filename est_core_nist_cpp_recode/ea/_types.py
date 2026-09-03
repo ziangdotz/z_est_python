@@ -239,16 +239,10 @@ class NonIidTestRun(TestRunBase):
         return d
 
 
-@dataclass
-class LagBuffer:
-    """Ring buffer for Lag Prediction Test."""
-    start: int = 0
-    end: int = 0
-    buf: list[int] = field(default_factory=lambda: [0] * 128)
-
-
 class PostfixDictionary:
     """Used by LZ78Y and MultiMMC for (prefix -> postfix count) mapping."""
+
+    __slots__ = ('_postfixes', '_cur_best', '_cur_prediction')
 
     def __init__(self):
         self._postfixes: dict[int, int] = {}
@@ -261,13 +255,17 @@ class PostfixDictionary:
         return self._cur_best, self._cur_prediction
 
     def increment_postfix(self, postfix: int, make_new: bool) -> bool:
-        """Increments postfix count. Returns True if new entry was created."""
-        if postfix in self._postfixes:
-            self._postfixes[postfix] += 1
-            cur_count = self._postfixes[postfix]
+        """Increments postfix count. Returns True if a new entry was created."""
+        counts = self._postfixes
+        new_entry = False
+
+        if postfix in counts:
+            counts[postfix] += 1
+            cur_count = counts[postfix]
         elif make_new:
-            self._postfixes[postfix] = 1
+            counts[postfix] = 1
             cur_count = 1
+            new_entry = True
         else:
             return False
 
@@ -276,4 +274,4 @@ class PostfixDictionary:
             self._cur_prediction = postfix
             self._cur_best = cur_count
 
-        return postfix not in self._postfixes or self._postfixes[postfix] == 1
+        return new_entry

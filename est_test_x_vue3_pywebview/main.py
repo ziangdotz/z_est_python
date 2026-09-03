@@ -13,6 +13,7 @@ import ctypes
 import functools
 import http.server
 import logging
+import multiprocessing
 import os
 import socketserver
 import subprocess
@@ -236,4 +237,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # The assessment spreads its estimates over worker processes. In a onefile
+    # build a spawned child re-runs this executable, and without the call below
+    # it would boot another window instead of running its task; the pipelines
+    # keep multiprocessing off when they detect a frozen build, so this only
+    # matters for a run that asks for workers explicitly.
+    multiprocessing.freeze_support()
     main()
