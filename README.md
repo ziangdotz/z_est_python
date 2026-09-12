@@ -7,11 +7,19 @@
 
 ## 1. 环境
 
-- conda 环境 `z_est_env_python`（Python 3.10）。**系统默认 python 没装 numpy**，直接 `python xxx.py` 会
-  `ModuleNotFoundError`；`make` 的目标一律用 `PYTHON=` 指到目标解释器（见 §5）。
+- 本工程固定使用 conda 环境 `z_est_env_python`，目录 `C:\Tools\miniconda3\envs\z_est_env_python`
+  （当前实测 Python 3.12.14）。**PATH 上的 `python` 不是这个环境**，而是 msys64 的
+  `C:\Tools\msys64\mingw64\bin\python.exe`，没装 numpy / nuitka，直接 `python xxx.py` 会
+  `ModuleNotFoundError`、`make build_all` 会 `No module named nuitka`。
+- `make` 的目标已经默认指向上面那个 conda 解释器（探测到该路径就用，探不到才回退 PATH 上的
+  `python`），无需每次手写 `PYTHON=`；要用别的解释器时显式覆盖（见 §5）。
 - 安装依赖：`pip install -r requirements.txt`
   - `requirements.txt` 是 **UTF-8 + LF**（历史上被存成 UTF-16LE+BOM，已转换；`.gitattributes` 负责守住这条线）
   - 全部版本锁定；`scipy` / `numba` 是可选项，缺失时代码自动回退（回退不改变任何计算结果）
+  - 当前环境按**构建 + 桌面应用**范围装配（已实测 `make build_all` / `jit_crosscheck` / `lrs_bench` 跑通），
+    64 条锁定项中精确命中 16 条；**未装的是三个功能栈**：`tensorflow` / `keras` 及其传递依赖
+    （只有 `est_core/main_dnn.py` 的 DNN 预测器需要）、`fastapi` / `uvicorn` / `pydantic`
+    （只有 `est_web_fastapi` 需要）、`pytest` / `coverage`。跑这些入口前先补装。
 
 | 依赖 | 必需 | 缺失时的行为 |
 |------|:----:|--------------|
@@ -33,12 +41,13 @@ z_est_python/
 │                                  #   ea_transpose · ea_unpack_bits（数据预处理）
 ├── est_test/                      # 实现 A 的测试入口
 ├── est_test_nist_cpp_recode/      # 实现 B 的测试入口 + 四个校验/基准工具（见 §4）
-├── est_test_x_vue3_pywebview/     # Vue3 + pywebview 桌面应用（前端在 frontend/，PyInstaller 打包）
+├── est_test_x_vue3_pywebview/     # Vue3 + pywebview 桌面应用（Nuitka 打包 onefile，详见其 README）
 ├── est_web_fastapi/               # FastAPI Web 服务（两条实现各挂一套路由）
 ├── 8ckup/                         # NIST C++ 上游源码副本 + 11 个测试样本 + selftest/refdata 基准（不入库）
 ├── data/                          # 本地输入数据与评估产物（不入库）
 ├── docs/                          # 本地设计笔记与实现分析（不入库）
 ├── release/                       # 打包输出（不入库）
+├── requirements.txt               # 全量版本锁定（UTF-8 + LF，见 §1）
 └── Makefile                       # 常用目标，见 §5
 ```
 
@@ -46,23 +55,19 @@ z_est_python/
 
 ## 3. 快速开始
 
-四个入口脚本都接受一个二进制数据文件，输出 JSON 汇总：
+四个入口脚本都接受一个二进制数据文件、输出 JSON 汇总，且都有对应的 `make` 目标
+（解释器已绑定 conda 环境，不必手写 `PYTHON=`）：
 
 ```bash
-# 实现 A（est_core）
-cd est_test && python est_test.py
-
-# 实现 B（est_core_nist_cpp_recode）—— 推荐，与 C++ 参考实现同源
-cd est_test_nist_cpp_recode && python est_test_nist_cpp_recode.py
-
-# 桌面应用（开发模式，需先在 frontend/ 里 npm install）
-cd est_test_x_vue3_pywebview && python main.py --dev
-
-# Web 服务
-cd est_web_fastapi && python run.py
+make run_test                        # 实现 A（est_core）
+make run_test_nist_cpp_recode        # 实现 B —— 推荐，与 C++ 参考实现同源
+make run_test_x_vue3_pywebview       # 桌面应用开发模式（自动 npm install，连 Vite dev server）
+make run_web_fastapi                 # FastAPI Web 服务
 ```
 
-只想跑单个环节时用 `cli/` 下的入口（详细参数 `-h`）：
+只想跑单个环节时用 `cli/` 下的入口（详细参数 `-h`）。这些没有 make 目标，下面的
+`python` 需先 `conda activate z_est_env_python`、或换成该解释器的绝对路径——裸
+`python` 会命中 msys64 那份（见 §1）：
 
 ```bash
 python ../est_core_nist_cpp_recode/cli/ea_non_iid.py <file> -vv      # 非 IID 全套，-vv 打印与 C++ 逐行同构
@@ -93,24 +98,61 @@ numba 开与关给出的 `H_assessed` 逐字相同。
 ## 5. Make 目标
 
 ```bash
-make help                                     # 列出全部目标
-make refdata_diff                             # 3 个短样本快速回归
-make refdata_diff_all                         # 11 个样本全量回归（数十分钟）
-make jit_crosscheck                           # 纯 Python / numba 两条路对拍
-make lrs_bench                                # 后缀数组 / LCP 计时与指纹
-make job_bench                                # 逐 job 耗时分布
+make help                                       # 列出全部目标
+
+# 运行四个入口
+make run_test                                   # 实现 A（est_core）
+make run_test_nist_cpp_recode                   # 实现 B（推荐，与 C++ 参考实现同源）
+make run_test_x_vue3_pywebview                  # 桌面应用开发模式
+make run_web_fastapi                            # FastAPI Web 服务
+
+# 与 C++ 参考实现的校验 / 基准（见 §4）
+make refdata_diff                               # 3 个短样本快速回归
+make refdata_diff_all                           # 11 个样本全量回归（数十分钟）
+make jit_crosscheck                             # 纯 Python / numba 两条路对拍
+make lrs_bench                                  # 后缀数组 / LCP 计时与指纹
+make job_bench                                  # 逐 job 耗时分布
+
+# 打包与清理
+make build_all                                  # 桌面应用 → release/（见 §6）
+make build_test_x_vue3_pywebview_windows_amd64  # build_all 目前唯一的成员目标
+make clean                                      # 删 release/ 里的产物
 ```
 
-目标里调用的是裸 `python`。本机环境是 conda，所以要么先激活环境，要么显式指定解释器（样本路径用
-`LRS_BENCH_SAMPLE` / `JOB_BENCH_SAMPLE` 覆盖）：
+目标里用的解释器默认是 conda 环境 `z_est_env_python`（自动继承到 `est_test_x_vue3_pywebview/`
+子 Makefile），所以直接 `make xxx` 即可；样本路径用 `LRS_BENCH_SAMPLE` / `JOB_BENCH_SAMPLE`
+覆盖，换解释器用 `PYTHON=` 覆盖：
 
 ```bash
-make refdata_diff PYTHON=D:/Tools/miniconda3/envs/z_est_env_python/python.exe
+make refdata_diff
+make refdata_diff PYTHON=C:/Tools/miniconda3/envs/z_est_env_python/python.exe   # 等价于默认值
 ```
 
 ---
 
-## 6. 数据文件格式
+## 6. 打包桌面应用
+
+`make build_all` 用 **Nuitka 4.0.8**（不是 PyInstaller）把桌面应用打成免安装的 onefile exe，
+产物落在 `release/est_test_x_vue3_pywebview_windows_amd64.exe`（约 46.8 MiB）。完整构建链、
+打包取舍，以及两个 Windows 陷阱（缺 Anaconda `Library\bin` 原生 DLL 导致启动即 native abort、
+Defender 的 ML 启发式把产物当病毒删——`Wacapew.A!ml` 打构建出的 exe、`Contebrew.A!ml`
+打运行时解压到 `%TEMP%\onefile_*` 的 `main.dll`，后者需单独加排除），详见
+[`est_test_x_vue3_pywebview/README.md`](est_test_x_vue3_pywebview/README.md)。
+
+构建完务必验证一次——GUI 构建没有控制台，结果必须落文件：
+
+```powershell
+release\est_test_x_vue3_pywebview_windows_amd64.exe --selftest --selftest-log selftest.log
+echo $LASTEXITCODE      # 0 = 通过
+```
+
+`--selftest` 走前端同一个 `Api` 真跑一次 IID + Non-IID，并校验 Vue 产物 `dist/index.html`
+确实在载荷里，用退出码回答“产物到底有没有把分析库和前端打进去”，比手点 UI 可靠。其它参数
+（`--selftest-all` / `--selftest-timeout`）见上述子 README。
+
+---
+
+## 7. 数据文件格式
 
 - 必须为**二进制**格式。熵源输出 1~8 位样本时每个样本占一个字节；9~16 位用两个连续字节（高字节在前），依此类推。
 - 建议采集不少于 **1,000,000** 个连续样本；无法满足时请记录原因。
