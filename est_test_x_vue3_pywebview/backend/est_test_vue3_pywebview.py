@@ -33,6 +33,36 @@ _CORE_DIR = os.path.normpath(
 if os.path.isdir(_CORE_DIR) and _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
+# ---------------------------------------------------------------------------
+# est_core entry points — these must stay at module level
+#
+# Nuitka's standalone analysis only follows top-level imports: left inside the
+# worker functions below, these modules and the numpy / mpmath stack they pull
+# in never reach the frozen artifact, so the exe builds cleanly and then fails
+# at runtime.
+# ---------------------------------------------------------------------------
+from chiSquareTest import chiSquareTest  # type: ignore[import-not-found]
+from collision import theCollisionEstimate  # type: ignore[import-not-found]
+from compression import theCompressionEstimate  # type: ignore[import-not-found]
+from longestRepeatedSubstring import (  # type: ignore[import-not-found]
+    lenOfTheLongestRepeatedSubstringTest,
+    longestRepeatedSubstringEstimate,
+)
+from markov import theMarkovEstimate  # type: ignore[import-not-found]
+from mostCommonValue import (  # type: ignore[import-not-found]
+    mostCommonValueRestart,
+    theMostCommonValueEstimate,
+)
+from permutationTest import permutationTest  # type: ignore[import-not-found]
+from SP80090Bv2Predictors import (  # type: ignore[import-not-found]
+    LagPredictionEstimate,
+    LZ78YPredictionEstimate,
+    MultiMCWPredictionEstimate,
+    MultiMMCPredictionEstimate,
+)
+from tTuple import tTupleEstimate  # type: ignore[import-not-found]
+from util import get_z, map_data, to_dataset  # type: ignore[import-not-found]
+
 
 # ===========================================================================
 #  Subprocess internals
@@ -82,9 +112,6 @@ def _emit(log_queue: Queue, value: float) -> None:  # type: ignore[type-arg]
 
 def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """Restart validation with sub-progress within row/column loops."""
-
-    from util import to_dataset, get_z                                    # type: ignore[import-not-found]
-    from mostCommonValue import mostCommonValueRestart                     # type: ignore[import-not-found]
 
     datafile = str(payload.get("datafile", "")).strip()
     bits_per_symbol = int(payload.get("bits_per_symbol") or 8)
@@ -166,12 +193,6 @@ def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-
 def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """IID entropy estimation with stage-level progress reporting."""
 
-    from util import to_dataset                                            # type: ignore[import-not-found]
-    from permutationTest import permutationTest                            # type: ignore[import-not-found]
-    from chiSquareTest import chiSquareTest                                # type: ignore[import-not-found]
-    from longestRepeatedSubstring import lenOfTheLongestRepeatedSubstringTest  # type: ignore[import-not-found]
-    from mostCommonValue import theMostCommonValueEstimate                 # type: ignore[import-not-found]
-
     t0 = time.perf_counter()
 
     datafile = str(payload.get("datafile", "")).strip()
@@ -248,20 +269,6 @@ def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
 
 def _run_noniid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """Non-IID entropy estimation with stage-level progress reporting."""
-
-    from util import to_dataset, map_data                                   # type: ignore[import-not-found]
-    from mostCommonValue import theMostCommonValueEstimate                  # type: ignore[import-not-found]
-    from collision import theCollisionEstimate                              # type: ignore[import-not-found]
-    from markov import theMarkovEstimate                                    # type: ignore[import-not-found]
-    from compression import theCompressionEstimate                          # type: ignore[import-not-found]
-    from tTuple import tTupleEstimate                                       # type: ignore[import-not-found]
-    from longestRepeatedSubstring import longestRepeatedSubstringEstimate   # type: ignore[import-not-found]
-    from SP80090Bv2Predictors import (                                      # type: ignore[import-not-found]
-        MultiMCWPredictionEstimate,
-        LagPredictionEstimate,
-        MultiMMCPredictionEstimate,
-        LZ78YPredictionEstimate,
-    )
 
     t0 = time.perf_counter()
 

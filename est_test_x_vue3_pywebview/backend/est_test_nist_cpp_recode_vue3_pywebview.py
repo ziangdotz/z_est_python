@@ -30,6 +30,18 @@ _CORE_DIR = os.path.normpath(
 if os.path.isdir(_CORE_DIR) and _CORE_DIR not in sys.path:
     sys.path.insert(0, _CORE_DIR)
 
+# ---------------------------------------------------------------------------
+# Analysis-library imports — these must stay at module level
+#
+# Nuitka's standalone analysis only follows top-level imports: left inside the
+# worker functions below, ``ea`` and the numpy / scipy / numba stack it pulls in
+# never reach the frozen artifact, so the exe builds cleanly and then fails at
+# runtime.
+# ---------------------------------------------------------------------------
+from ea.iid_pipeline import run_iid_test  # type: ignore[import-not-found]
+from ea.non_iid_pipeline import run_non_iid_test  # type: ignore[import-not-found]
+from ea.restart import restart_test  # type: ignore[import-not-found]
+
 
 # ===========================================================================
 #  Subprocess internals
@@ -71,8 +83,6 @@ def _emit(log_queue: Queue, value: float) -> None:  # type: ignore[type-arg]
 def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """Restart validation via ``est_core_nist_cpp_recode``."""
 
-    from ea.restart import restart_test  # type: ignore[import-not-found]
-
     datafile = str(payload.get("datafile", "")).strip()
     H_I = float(payload.get("h_i"))
     verbose = int(payload.get("verbose", 1))
@@ -103,8 +113,6 @@ def _run_restart(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-
 
 def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """IID entropy estimation via ``est_core_nist_cpp_recode``."""
-
-    from ea.iid_pipeline import run_iid_test  # type: ignore[import-not-found]
 
     datafile = str(payload.get("datafile", "")).strip()
     bits_per_symbol = int(payload.get("bits_per_symbol") or 0)
@@ -143,8 +151,6 @@ def _run_iid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
 
 def _run_noniid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-arg]
     """Non-IID entropy estimation via ``est_core_nist_cpp_recode``."""
-
-    from ea.non_iid_pipeline import run_non_iid_test  # type: ignore[import-not-found]
 
     t0 = time.perf_counter()
 

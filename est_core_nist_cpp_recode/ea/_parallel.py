@@ -96,7 +96,11 @@ def open_pool(
     )
     try:
         assert pool.submit(_probe).result()
-    except (RuntimeError, OSError) as exc:
+    except (AssertionError, RuntimeError, OSError) as exc:
+        # ``AssertionError`` is the daemon case: ``BaseProcess.start()`` refuses to
+        # spawn from a daemon process, which is exactly how a GUI backend runs an
+        # assessment - in a daemon child of its own.  Degrade like every other
+        # unspawnable host instead of failing halfway through.
         pool.shutdown(wait=False, cancel_futures=True)
         print(f"\t*** Warning: cannot start worker processes ({exc}); "
               f"{subject} in this process only ***")
