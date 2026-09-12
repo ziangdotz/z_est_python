@@ -19,7 +19,6 @@
 *.cpp     text
 *.yml     text
 *.toml    text
-Makefile  text
 
 # 明确按二进制处理：永不做换行转换
 *.bin     binary
@@ -36,5 +35,7 @@ Makefile  text
 *.nbi     binary
 *.nbc     binary
 
-# 构建脚本必须保持 LF，否则 sh 无法执行
+# 构建脚本必须保持 LF：sh 无法执行 CRLF 脚本，GNU make 也会把行尾的 \r 带进
+# 变量值和配方 —— core.autocrlf=true 的 Windows 检出正是会踩这个坑。
 *.sh      text eol=lf
+Makefile  text eol=lf

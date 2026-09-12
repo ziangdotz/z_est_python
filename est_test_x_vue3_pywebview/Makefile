@@ -87,7 +87,7 @@ CONDA_DLL_FLAGS := $(foreach d,$(wildcard $(addprefix $(CONDA_LIBRARY_BIN)/,$(CO
 # 加进 --nofollow-import-to 兜底；运行时那句 import 落到 try/except 里退化为无 JIT，安全。
 NUITKA_FLAGS := --standalone \
 				--onefile \
-				--windows-disable-console \
+				--windows-console-mode=disable \
 				--assume-yes-for-downloads \
 				--windows-icon-from-ico=$(APPLOGO_ICON) --enable-plugin=tk-inter \
 				--include-data-dir=$(RESOURCES_DIR)=$(RESOURCES_DIR) \
