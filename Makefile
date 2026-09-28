@@ -76,8 +76,10 @@ run_test_nist_cpp_recode:
 refdata_diff:
 	$(PYTHON) $(TEST_NIST_CPP_RECODE_CODE_PATH)/refdata_diff.py
 
+# 全量 11 样本必须配 --tol 1e-6：预测器派生值（MultiMCW 的 -log2 会按 1/|ln p| 放大相对误差）
+# 在默认的 1e-9 严格档下本来就会超容差，不配这个标志该目标恒为 FAIL。见 refdata_diff.py 头部说明。
 refdata_diff_all:
-	$(PYTHON) $(TEST_NIST_CPP_RECODE_CODE_PATH)/refdata_diff.py --all
+	$(PYTHON) $(TEST_NIST_CPP_RECODE_CODE_PATH)/refdata_diff.py --all --tol 1e-6
 
 lrs_bench:
 	$(PYTHON) $(TEST_NIST_CPP_RECODE_CODE_PATH)/lrs_bench.py $(LRS_BENCH_SAMPLE)

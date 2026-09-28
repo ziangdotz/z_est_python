@@ -329,8 +329,12 @@ def _run_noniid(payload: dict, log_queue: Queue) -> dict:  # type: ignore[type-a
         results["Collision"] = minH
         _emit(log_queue, 0.12)
         if verbose:
-            print("- Collision Estimate: p(max) = %g, min-entropy = %g" % (pmax, minH))
-        min_entropy = min(minH, min_entropy)
+            if minH is None:
+                print("- Collision Estimate: not applicable (v < 1000), excluded from the minimum")
+            else:
+                print("- Collision Estimate: p(max) = %g, min-entropy = %g" % (pmax, minH))
+        if minH is not None:
+            min_entropy = min(minH, min_entropy)
 
         # Section 6.3.3 — Markov
         if use_bits > 6:

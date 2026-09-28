@@ -306,7 +306,7 @@ def chiSquareTest(dataset, verbose=False):
     else:
         if verbose:
             print("** Failed chi-square independence tests")
-            return False
+        return False
 
     # chi-square goodness-of-fit test
     # divide the dataset into 10 subsets of equal length
@@ -327,6 +327,6 @@ def chiSquareTest(dataset, verbose=False):
     else:
         if verbose:
             print("** Failed chi-square goodness-of-fit tests")
-            return False
+        return False
 
     return True

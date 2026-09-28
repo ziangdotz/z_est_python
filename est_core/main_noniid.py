@@ -79,9 +79,13 @@ def main_noniid(datafile, bits_per_symbol, use_bits=None, verbose=False):
         pmax, minH = theCollisionEstimate(dataset, k)
         results["Collision"] = minH
         if verbose:
-            print("- Collision Estimate: p(max) = %g, min-entropy = %g" %
-                  (pmax, minH))
-        minEntropy = min(minH, minEntropy)
+            if minH is None:
+                print("- Collision Estimate: not applicable (v < 1000), excluded from the minimum")
+            else:
+                print("- Collision Estimate: p(max) = %g, min-entropy = %g" %
+                      (pmax, minH))
+        if minH is not None:
+            minEntropy = min(minH, minEntropy)
 
         # Section 6.3.3 The Markov Estimate: If more than 6 bits per symbol, map down to 6 bits per symbol and run Markov test
         if use_bits > 6:

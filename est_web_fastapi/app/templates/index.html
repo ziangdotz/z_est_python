@@ -1363,9 +1363,13 @@
 			};
 
 			let html = '<thead><tr><th>估计器</th><th>英文名</th><th>min_entropy</th></tr></thead><tbody>';
+			// 不适用的估计器后端返回 null（Collision 在 v < 1000 时就是），
+			// Math.min 会把 null 当 0，高亮就会指到错误的行——先滤掉非数值。
+			const numericVals = Object.values(details).filter(v => typeof v === "number" && Number.isFinite(v));
+			const minVal = numericVals.length ? Math.min(...numericVals) : null;
 			for (const [key, val] of Object.entries(details)) {
 				const enName = estimatorNames[key] || key;
-				const isMin = val === Math.min(...Object.values(details));
+				const isMin = minVal !== null && val === minVal;
 				const highlight = isMin ? ' style="background:#eef6ff;font-weight:700;"' : '';
 				html += '<tr' + highlight + '><td class="mono">' + key + '</td><td>' + enName + '</td><td class="mono">' + formatNum(val) + '</td></tr>';
 			}

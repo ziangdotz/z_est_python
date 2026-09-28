@@ -77,7 +77,9 @@ make build_windows_amd64
 同步 `frontend/dist` 到 `dist/` → Nuitka `--standalone --onefile` → 拷到
 `release/est_test_x_vue3_pywebview_windows_amd64.exe`。
 
-- 产物 **46.77 MiB**；775 个 C 文件
+- 产物 **46.77 MiB**（实测 49,050,112 B）；775 个 C 文件；`bin/main.dist` 展开后 232 MiB
+- payload 压缩靠 `zstandard`：没装只会在开头提一句 `Onefile mode cannot compress` 然后照样构建成功
+  （产物大不少），装上后走 `Using compression`。当前环境已装
 - 耗时：ccache 冷启约 9 min（含首次下载 winlibs gcc），热启约 6 min
 - 想看进度：`make build_windows_amd64 NUITKA_PROGRESS=--show-progress`
   （默认不带——stdout 被重定向时该选项会让 Nuitka 抛 `OSError[Errno 22]` 静默中止）
@@ -182,7 +184,10 @@ DLL 已映射进内存之后，于是“碰巧”跑通了——时序侥幸，�
   排除后产物 **87.5 → 46.77 MiB**，编译省十几分钟。
 - **保留 scipy**：只有 `ea/chi_square.py` 用 `gammaincc`，缺失时会回退到内置 Cephes
   `igamc`（数值等价），所以它可排可不排；当前保留。
-- **nofollow `tensorflow` / `keras`**：只有 `est_core/main_dnn.py` 需要，本机未装。
+- **nofollow `tensorflow` / `keras`**：只有 `est_core/main_dnn.py` 的 DNN 预测器需要，桌面应用的
+  两个 runner 都不走那条路。本机**已装**（TF+keras 约 1,394 MiB），所以排除它纯粹是为了产物体积
+  与启动时间——真被静态分析跟进去的话 onefile 会膨胀到几百 MiB 量级，且导入本身要 +2–4 s。
+  这条与 `docs/优化候选清单与资源预算.md` §4-C 的「DNN 只应挂独立入口、绝不进主路径」是同一个判断。
 - **nofollow `markov_chain_generate`**：该模块没有 `__main__` 守卫，import 即写文件。
 
 ---
@@ -193,10 +198,17 @@ DLL 已映射进内存之后，于是“碰巧”跑通了——时序侥幸，�
   `est_core`；`frontend` 一项只验 `dist/index.html` 在不在，不校验 JS/CSS 资产完整性。
 - **自检不启动 GUI**：pywebview 窗口、托盘、渲染一概不碰，所以目标机缺 WebView2 Runtime
   这类问题它测不出来。Nuitka 构建时也明确告警 `Cannot find Windows Runtime DLLs to
-  include, requiring them to be installed on target systems`。
-- **`ea/_parallel.py` 的 `frozen()` 对 Nuitka 失效**：它判的是 `sys.frozen` 或
+  include, requiring them to be installed on target systems`。本机手动跑过 GUI（`release/` 下
+  留有 WebView2 用户数据目录），但那是人工验证，不在自检的退出码里。
+- **exe 把 WebView2 用户数据写在自身旁边**：跑过 GUI 后 `release/` 里会多出
+  `est_test_x_vue3_pywebview_windows_amd64.exe.WebView2\EBWebView\...`（含 `Default` 配置、
+  `GPUPersistentCache` / `ShaderCache` / `Crashpad`）。`release/` 已被 `.gitignore` 覆盖，不污染仓库；
+  但这意味着**产物不能放进只读目录**（如 `Program Files`）——那里建不出这个目录，WebView2 初始化会失败。
+  要装到只读位置得先给 pywebview 显式指定一个可写的 `user_data_dir`。
+- **`ea/_parallel.py` 的 `frozen()` 对 Nuitka 失效（截至 `4d3e1bd` 仍未修）**：它判的是 `sys.frozen` 或
   `sys.__compiled__`，而 Nuitka 两者都不设——上面 `signals:` 那行实测只命中
   `builtins.__nuitka_binary_dir` 与模块级 `__compiled__`。后果是冻结产物里 `auto_workers()`
   仍返回多进程数、`_jit` 的 numba 守卫也不生效（靠 numba 未被打包后 import 失败再回退兜底，
-  结果仍逐位正确）。修它会改变并发度、属于功能变更，故本轮未动；`main.py` 的
-  `is_frozen()` 已改用正确的多信号判定。
+  结果仍逐位正确）。修它会改变并发度、属于功能变更，故 `4d3e1bd` 只修了 `main.py` 的
+  `is_frozen()`（四信号 or 链，已改用正确的多信号判定），`ea/_parallel.py` 这一处原样留着。
+  注意别把两者的修复状态搞混：`main.py` 已修，`ea/_parallel.py` 未修。

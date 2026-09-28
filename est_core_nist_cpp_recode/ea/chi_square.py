@@ -252,6 +252,20 @@ def _calc_T(bin_expectations: list, o: list) -> float:
     return T
 
 
+def _bin_lookup(e: list) -> np.ndarray:
+    """``tuple_val -> bin`` as an array, so observed counts can be histogrammed.
+
+    The per-sample loops in the reference index ``e[tuple_val].bin`` through a
+    list of Python objects; scattering the same mapping into an array once lets
+    ``bincount`` do the counting. Bins are exact integers, so this reproduces the
+    loop's tallies exactly - ``_calc_T`` still sees the identical ``o``.
+    """
+    bin_of = np.zeros(len(e), dtype=np.int32)
+    for entry in e:
+        bin_of[entry.tuple_val] = entry.bin
+    return bin_of
+
+
 # --- Binary Chi-Square Independence ---
 
 def binary_chi_square_independence(
@@ -274,12 +288,13 @@ def binary_chi_square_independence(
     tuple_count = 1 << m
     block_count = sample_size // m
 
-    occ = np.zeros(tuple_count, dtype=np.int64)
-    for i in range(block_count):
-        symbol = 0
-        for j in range(m):
-            symbol = (symbol << 1) | int(data[i * m + j])
-        occ[symbol] += 1
+    # Each block of ``m`` bits is one tuple value, MSB first - the same integer
+    # the reference builds by shifting in one bit per iteration. Counting them is
+    # a histogram over exact integers, so bincount reproduces the per-tuple loop
+    # bit for bit; only the loop is gone.
+    blocks = np.asarray(data[: block_count * m], dtype=np.int32).reshape(block_count, m)
+    weights = np.int32(1) << np.arange(m - 1, -1, -1, dtype=np.int32)
+    occ = np.bincount(blocks @ weights, minlength=tuple_count)
 
     T = 0.0
     for i in range(tuple_count):
@@ -311,10 +326,13 @@ def chi_square_independence(
     _allocate_bins(e, bin_expectations)
     e.sort(key=lambda x: x.tuple_val)
 
-    o = np.zeros(len(bin_expectations), dtype=np.int64)
-    for j in range(0, sample_size - 1, 2):
-        index = int(data[j]) * alphabet_size + int(data[j + 1])
-        o[e[index].bin] += 1
+    # Consecutive non-overlapping pairs: the same j the reference steps through
+    # with ``range(0, sample_size - 1, 2)``, so an odd trailing sample is dropped
+    # here exactly as it is there.
+    pair_count = len(range(0, sample_size - 1, 2))
+    d = np.asarray(data, dtype=np.int32)
+    index = d[0:2 * pair_count:2] * alphabet_size + d[1:2 * pair_count:2]
+    o = np.bincount(_bin_lookup(e)[index], minlength=len(bin_expectations))
 
     score = _calc_T(bin_expectations, o.tolist())
     df = len(bin_expectations) - alphabet_size
@@ -363,12 +381,13 @@ def goodness_of_fit(
     e.sort(key=lambda x: x.tuple_val)
 
     block_size = sample_size // 10
+    bin_of = _bin_lookup(e)
+    # Map every sample to its bin once, then reshape into the ten equal blocks the
+    # reference walks. Same per-block tallies, same order for T to accumulate in.
+    blocks = bin_of[np.asarray(data[: 10 * block_size], dtype=np.int32)].reshape(10, block_size)
     T = 0.0
     for j in range(10):
-        o = np.zeros(len(bin_expectations), dtype=np.int64)
-        for idx in range(block_size):
-            val = int(data[j * block_size + idx])
-            o[e[val].bin] += 1
+        o = np.bincount(blocks[j], minlength=len(bin_expectations))
         T += _calc_T(bin_expectations, o.tolist())
 
     df = 9 * (len(bin_expectations) - 1)

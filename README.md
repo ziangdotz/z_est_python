@@ -16,10 +16,10 @@
 - 安装依赖：`pip install -r requirements.txt`
   - `requirements.txt` 是 **UTF-8 + LF**（历史上被存成 UTF-16LE+BOM，已转换；`.gitattributes` 负责守住这条线）
   - 全部版本锁定；`scipy` / `numba` 是可选项，缺失时代码自动回退（回退不改变任何计算结果）
-  - 当前环境按**构建 + 桌面应用**范围装配（已实测 `make build_all` / `jit_crosscheck` / `lrs_bench` 跑通），
-    64 条锁定项中精确命中 16 条；**未装的是三个功能栈**：`tensorflow` / `keras` 及其传递依赖
-    （只有 `est_core/main_dnn.py` 的 DNN 预测器需要）、`fastapi` / `uvicorn` / `pydantic`
-    （只有 `est_web_fastapi` 需要）、`pytest` / `coverage`。跑这些入口前先补装。
+  - 当前环境是**全量装配**：64 条锁定项 64 条命中（2026-09-28 实测，含 `tensorflow` / `keras`、
+    `fastapi` / `uvicorn` / `pydantic`、`pytest` / `coverage` 三个功能栈），`make build_all` /
+    `jit_crosscheck` / `lrs_bench` 均已实机跑通。只有 `ruff` / `mypy` / `psutil` 不在锁定项里、
+    也没装（静态检查那条待办要先补装，见 `docs/优化候选清单与资源预算.md` §4-D）
 
 | 依赖 | 必需 | 缺失时的行为 |
 |------|:----:|--------------|

@@ -357,6 +357,10 @@ def permutationTest(s, verbose=False):
     """
     Permutation testing
     """
+    # 第 2.1 步的 Fisher-Yates 是原地洗牌。调用方（main_iid.py:45）跑完这里之后，
+    # 还要把同一份 dataset 交给卡方独立性检验（:56）和 LRS 检验（:66）——这两项测的
+    # 正是序列的先后结构，被洗掉之后就永远只会"通过"。复制一份，别污染调用方的数据。
+    s = list(s)
     mean, median, is_binary = calc_stats(s)
 
     # 1. For each test i

@@ -17,22 +17,33 @@ def collision_test(
     Section 6.3.2: Collision Estimate.
     Binary data only. Returns min-entropy estimate.
     """
+    # t_v depends only on whether data[i] == data[i + 1], so the comparisons are
+    # one vectorized pass. The walk itself stays sequential: i += t_v makes every
+    # visited position depend on the previous one.
+    d = np.asarray(data)
+    pairs = max(length - 1, 0)
+    eq = (d[:pairs] == d[1:pairs + 1]).tolist()
+
     i = 0
     v = 0
     sum_t = 0
     sum_t2 = 0.0
+    last = length - 1
+    second_last = length - 2
 
-    while i < length - 1:
-        if int(data[i]) == int(data[i + 1]):
-            t_v = 2
-        elif i < length - 2:
-            t_v = 3
+    while i < last:
+        if eq[i]:
+            v += 1
+            sum_t += 2
+            sum_t2 += 4.0
+            i += 2
+        elif i < second_last:
+            v += 1
+            sum_t += 3
+            sum_t2 += 9.0
+            i += 3
         else:
             break
-        v += 1
-        sum_t += t_v
-        sum_t2 += t_v * t_v
-        i += t_v
 
     if v == 0:
         if verbose > 1:

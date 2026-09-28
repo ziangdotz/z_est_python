@@ -90,8 +90,11 @@ def theCollisionEstimate(s, n):
     diff_t = [t[i]-t[i-1] for i in range(1, len(t))]
     v = float(len(diff_t))  # float() so it works in Python 2.6,2.7
     if v < 1000:
+        # 6.3.2 第 6 步：v < 1000 时这条估计"不适用"，标准要求把输出按排名映射降位后重测，
+        # 而不是给出一个熵值。返回 None 而不是 0.0：调用方拿它去 min() 汇总时，
+        # 0.0 会静悄悄把整份报告的 min-entropy 压成 0，而 None 会直接报错。
         print("Must map down data for collision estimate, then retest")
-        return 0.0, 0.0
+        return None, None
 
     # 7. Calculate sample mean, mu, and sample stddev, sigma of the differences of collision times
     mu = sum(diff_t)/v
