@@ -11,6 +11,11 @@
 import math
 from collections import Counter
 
+# 99% 置信水平的正态分位数 z_alpha。原先这里写死 2.576（NIST 文档里的四舍五入值），
+# 与 C++ 参考实现用的 2.5758293035489008 相差 6.6e-5，经 -log2 放大后能到 5.9e-6 bit，
+# 超过本工程自己的 1e-6 验收容差。est_core_nist_cpp_recode/ea/_config.py 有同名常量。
+ZALPHA = 2.5758293035489008
+
 
 def mostCommonValueRestart(s):
     """
@@ -39,8 +44,12 @@ def theMostCommonValueEstimate(s):
     pmax = cmax/L
 
     # 2. Calculate an upper bound on the probability of the most common value, p_u
-    ubound = pmax + 2.576*math.sqrt(pmax * (1.0-pmax)/L)
+    # 分母是 L-1（样本方差的无偏估计），不是 L；写 L 会让上界系统性偏小，
+    # 从而把 min-entropy 估高。C++ 参考实现用的是 length-1。L==1 时除零，
+    # 参考实现同样没有保护——不额外加，避免造出两边行为不一致的新分支。
+    ubound = pmax + ZALPHA*math.sqrt(pmax * (1.0-pmax)/(L-1.0))
     pu = min(1, ubound)
 
     # 3. The estimated min-entropy is -log_2(p_u)
-    return [pu, -math.log(pu, 2.0)]
+    # math.log(pu, 2.0) 在 CPython 里是 log(pu)/log(2.0)，与 math.log2(pu) 可能差 1 ULP。
+    return [pu, -math.log2(pu)]
