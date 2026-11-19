@@ -6,7 +6,7 @@
 
 ## 环境要求
 
-- Python 3.x
+- 建议 Python 3.12；解释器选择与完整依赖安装见[根 README](../README.md#2-环境)
 - NumPy
 - （可选）SciPy（用于 χ² 检验，无时回退到内置实现）
 - （可选）numba（四个逐样本预测器的热点循环编译执行；缺失时自动回退到纯 Python 循环，结果不变）
@@ -21,21 +21,30 @@ est_test_nist_cpp_recode/
 ├── refdata_diff.py                # 与 C++ selftest/refdata 逐行比对 Non-IID 输出（回归校验）
 ├── lrs_bench.py                   # t-Tuple/LRS 的 SA、LCP 分函数计时与中间量指纹
 ├── jit_crosscheck.py              # 对拍每个预测器的纯 Python 循环与 numba kernel
-├── job_bench.py                   # 按调度顺序逐个计时，看并行后的最长 job（墙钟下限）
+├── job_bench.py                   # 主要估计器计时与最慢项，不代表完整调度覆盖
 └── README.md                      # 本说明文档
 ```
 
 核心算法模块位于上级目录 `est_core_nist_cpp_recode/` 中。
+四个校验/基准脚本是开发工具，桌面应用和 Web 服务直接调用核心库，不依赖这些脚本。
 
 ---
 
 ## 使用方法
 
-基本语法：
+以下直接调用的示例在 `est_test_nist_cpp_recode/` 目录执行，并使用已安装依赖的 Python：
 
 ```bash
 python est_test_nist_cpp_recode.py <数据文件路径> [选项]
 ```
+
+也可从仓库根目录传入参数（相对数据路径按根目录解析）：
+
+```bash
+make run_test_nist_cpp_recode TEST_ARGS="data/source.bin --non-iid -j 1"
+```
+
+不传 `TEST_ARGS` 时，Make 目标默认显示 `--help`，不会自动选择数据或测试模式。
 
 ---
 
@@ -46,8 +55,8 @@ python est_test_nist_cpp_recode.py <数据文件路径> [选项]
 | 参数 | 缩写 | 说明 | 默认值 |
 |------|------|------|--------|
 | `datafile` | （位置参数） | 待测试的二进制数据文件路径 | （必填） |
-| `--bits` | | 每个符号的位数（0 = 自动检测） | `0` |
-| `--verbose` | `-v` | 增加输出详细程度（可叠加：`-v`, `-vv`） | `1` |
+| `--bits` | | IID / Non-IID 的符号位宽，1～8；0 = 自动检测。Restart 仍自动检测 | `0` |
+| `--verbose` | `-v` | 增加输出详细程度：无标志为 1，`-v` 为 2，`-vv` 为 3 | `1` |
 
 ### 测试模式选项（至少选择一项）
 
@@ -62,7 +71,7 @@ python est_test_nist_cpp_recode.py <数据文件路径> [选项]
 | 参数 | 适用模式 | 说明 |
 |------|----------|------|
 | `--h-i` | Restart | 需要验证的目标初始最小熵估计值 H_I（执行 Restart 测试时**必须**指定） |
-| `--workers` | IID / Non-IID | 并行进程数，缩写 `-j`：IID 按置换轮次并行、Non-IID 按各估计器并行；默认每个物理核 1 个，`-j 1` 关闭多进程 |
+| `--workers` | IID / Non-IID | 并行进程数，缩写 `-j`：IID 按置换轮次并行、Non-IID 按估计器并行；默认按逻辑 CPU 数的一半估算，至少 1 个；`-j 1` 关闭并行 |
 
 ---
 
@@ -94,11 +103,9 @@ python est_test_nist_cpp_recode.py source_out.bin --restart --iid --non-iid --h-
 
 ### 5. 限制并行度
 
-IID 的 10000 轮置换按轮次分发到多个进程预先计算，计数仍严格按轮序进行，因此
-并行与串行（同一随机种子下）的 `C[i][*]` 计数逐元素一致，判定结果不受影响。
-Non-IID 的各估计器（§6.3.2 起）同样分发到多个进程，父进程按参考实现的顺序取回
-并重放它们打印的明细行，所以 `-j 1` 与并行输出的唯一差异是 timestamp / commandline。
-在共享机器上可用 `-j` 压低占用，或用 `-j 1` 完全退回单进程：
+IID 置换检验在同一随机种子下按轮序计数；Non-IID 在父进程按固定顺序重放估计器的输出。
+当前统一入口不提供 IID 随机种子参数，不能假定两次独立运行的 JSON 逐字相同。
+共享机器上可用 `-j` 限制占用，或用 `-j 1` 退回单进程：
 
 ```bash
 python est_test_nist_cpp_recode.py source_out.bin --iid -j 4
@@ -107,78 +114,76 @@ python est_test_nist_cpp_recode.py source_out.bin --non-iid -j 1
 
 ---
 
-## 与 C++ 参考实现的回归比对（refdata_diff.py）
+## 开发校验与基准
 
-`ea_non_iid` 在 `-vv` 下打印的每一行 `… Estimate: …` 与 C++ 参考实现的行数、字段名、顺序
-逐字一致，因此可以直接拿仓库里的 `8ckup/.../selftest/refdata/*.res` 做回归基准：
+这些脚本不会被 `build_all` 自动执行，也不是最终程序的运行依赖。
+
+### 与 C++ 参考实现的回归比对（refdata_diff.py）
+
+脚本运行 `ea_non_iid -vv`，只提取含 ` Estimate:` 的明细行，与
+`../8ckup/NIST_SP800-90B_EntropyAssessment/cpp/selftest/refdata/*.res` 比较。
+`8ckup/` 不入库，需另行准备样本和参考输出；缺失用例会计入失败。
 
 ```bash
-python refdata_diff.py                       # 3 个 10000 样本的短文件（秒级）
-python refdata_diff.py --all                 # 11 个 refdata 样本（数十分钟）
+python refdata_diff.py                       # 3 个 10000 样本的短文件，默认容差 1e-9
+python refdata_diff.py --all --tol 1e-6       # 11 个 refdata 样本，耗时较长
 python refdata_diff.py truerand_4bit --show-ulp -j 1
 ```
 
-每个行对先比“文本骨架”（只把 `= 数值` 部分遮成 `#`，所以字段名/段名/行序漂移会直接报
-“wording drift”），再按位置提取数值做相对误差比较（默认容差 `1e-9`，超出报
-“value mismatch”，容差内计入 within-tol）。无硬差异时退出码为 0，可直接接进 CI 或 `make refdata_diff`。
+每个行对先比文本骨架（仅遮住 `= 数值`），再按位置比较数值的相对误差。
+字段名、段名或行序不一致报 `wording drift`，数值超容差报 `value mismatch`。
+全部用例通过时退出码为 0，否则为 1；头部提示、`H_*` 汇总、JSON 和其它测试模式不在比对范围内。
 
-当前基准上的结果：11 个样本的行数完全相同（binary 63 行、多比特 104 行），字段名与行序零漂移，
-数值差异只来自三类已知原因：C++ 用 80-bit `long double` 打印 `%.22Lg`（Python 只有 `double`）；
-`log2` / `sqrt` 派生值的 1–2 ULP libm 差异（refdata 在 Linux/glibc 下生成）；`calc_p_local` 二分搜索
-的收敛点差异（仅 ringOsc-nist 的 MultiMCW，经 `-log2` 放大后为 1.1e-9）。因此验收预测器派生值时用
-`python refdata_diff.py --all --tol 1e-6`（对应重写方案 §15.4 的「正常」档），平时回归用默认的 1e-9 严格档。
+默认 `1e-9` 用于短样本严格回归。全量目标保留 `--tol 1e-6`，因为 C++ `long double`、
+Python `float` 与不同数学库可能产生收敛点和舍入差异；预测器 `-log2(p)` 的相对误差又会按
+`1/|ln p|` 放大，已知参考样本会在严格档超容差。该阈值仅用于输出验收，**不改变最终熵计算**，
+也不表示其它算法错误可以通过放宽容差忽略。
 
 ---
 
-## 后缀数组 / LCP 的中间量指纹（lrs_bench.py）
+### 后缀数组 / LCP 的中间量指纹（lrs_bench.py）
 
-`refdata_diff.py` 只能看到 t-Tuple / LRS 两个最终熵值，而熵值是标量：后缀数组或 LCP 数组里某个
-位置错了，只要不落在取胜的那几个前缀上，熵值可能照样对。`lrs_bench.py` 把 `build_suffix_array`
-的首尾若干项、`sa_to_lcp` 的 max/sum 与两个熵值的 `repr()` 一并打印，并分函数计时：
+打印后缀数组的首尾抽样、LCP 的 max/sum、两个熵值的 `repr()`，并分别计时。
+相比只看最终熵值，它更容易发现 `_lrs.py` 改动造成的中间量差异：
 
 ```bash
 python lrs_bench.py ../8ckup/NIST_SP800-90B_EntropyAssessment/bin/truerand_4bit.bin
 # 或 make lrs_bench（仓库根目录，默认就是上面这份样本）
 ```
 
-改 `_lrs.py` 时前后各跑一次，要求指纹逐元素相同：熵值对上了只能说明错误没影响到结果的位置，
-中间量对得上才是真的等价。耗时只能用于同一次运行内比较函数之间
-（本机持续负载会降频，热态整体约 ×1.3）。
+改动前后比较打印的指纹，计时字段不参与判等。**抽样指纹相同并不能证明完整数组逐元素相同**，
+必要时仍应增加完整数组比对和边界用例；耗时比较需控制样本、负载及冷热启动条件。
 
 ---
 
-## 纯 Python / numba 双胞胎对拍（jit_crosscheck.py）
+### 纯 Python / numba 对拍（jit_crosscheck.py）
 
-MultiMCW / Lag / MultiMMC / LZ78Y 各有一份逐样本循环，`ea/_jit.py` 让 numba 把同一份循环
-编译成机器码。两条路必须交出完全相同的 `correct_count` / `max_run`，但仅靠端到端回归验不了：
-JIT 只在样本数超过 `JIT_MIN_SAMPLES`（10 万）时才启用，短样本的回归根本不会走到 kernel 上。
-`jit_crosscheck.py` 绕开这道尺寸门槛，直接把两条路的原始计数拿出来比：
+脚本比较 MultiMCW / Lag 的两种视图，以及二元 MultiMMC / LZ78Y 的 Python 与 numba 原始计数。
+它绕过 `JIT_MIN_SAMPLES`（默认 10 万）的尺寸门槛，因此可覆盖短样本正常评估不会执行的 JIT 路径：
 
 ```bash
 python jit_crosscheck.py                       # 11 个 refdata 样本，每视图截断 25 万符号
 python jit_crosscheck.py --samples truerand_8bit --cap 0
 ```
 
-每个用例除了比计数，还要求 `Kernel.compiled` 非空——静默退回 Python 侧会让「两边相同」
-变成同义反复。Lag 的两侧本来就是两种写法（列表 + 二分裁剪 vs 参考实现的 128 槽环形缓冲），
-所以这一行同时对译了数据结构。改任一 kernel 后跑一次即可（无 numba 时直接报错退出）。
+每个有效用例还要求 `Kernel.compiled` 非空，避免两侧都退回 Python 后得到无效的“通过”。
+numba 不可用或设置了 `EA_DISABLE_JIT=1` 时无法完成 JIT 验证，会报错退出。
 
 ---
 
-## 逐 job 耗时分布（job_bench.py）
+### 逐 job 耗时分布（job_bench.py）
 
-估计器并行之后，墙钟 ≈ 最贵的单个 job + 父进程开销，所以「还能不能再快」只看这张表。
-`refdata_diff.py` 管端到端正确性，`jit_crosscheck.py` 管两条路等价，速度分布归这里：
+在单进程中对主要 Non-IID 估计器逐个计时，辅助定位热点，不做正确性判定：
 
 ```bash
 python job_bench.py ../8ckup/NIST_SP800-90B_EntropyAssessment/bin/truerand_4bit.bin
 # 或 make job_bench（仓库根目录，默认就是上面这份样本）
 ```
 
-它在单进程里跑，每行一个 (估计器, 视图)，末两行给出 `SUM`（单进程跑完全部估计器的量）
-与 `MAX (critical path)`（并行后墙钟的下限）。要比较 JIT 开 / 关，用 `EA_DISABLE_JIT=1`
-在**同一轮**里各跑一次：本机是笔记本，持续负载会降频（热态整体约 ×1.3），后台还有别的
-进程时所有 job 会一起放慢（实测过 ×1.9），此时绝对值不可比、只有同一次运行内的比值可信。
+每行一个 (估计器, 视图)，`SUM` 为本次计时之和，`MAX` 为最慢项，仅用于估计理想并行的下限，
+不是端到端墙钟时间。脚本不计 MCV，且当前跳过 Collision / Markov / Compression 的 Literal 视图，
+因此二元样本也不会测到这三项，不能视作完整调度覆盖。
+比较 JIT 开关时需固定样本、机器负载及缓存状态；首次内核编译成本可能计入首个调用。
 
 ---
 
@@ -187,14 +192,16 @@ python job_bench.py ../8ckup/NIST_SP800-90B_EntropyAssessment/bin/truerand_4bit.
 - 测试过程中会在控制台输出各阶段的执行进度与中间结果（使用 `-v` 开启详细输出）。
 - 所有测试完成后，以 **JSON 格式** 输出汇总结果，便于日志记录与二次集成处理。
 - 若某项测试发生异常，错误信息会单独记录在 JSON 结果中，不会中断其他测试的执行。
+- 外层 `status: pass` 仅表示核心调用未抛异常；还需检查 `data.errorLevel`、`errorMsg` 及 IID 的各检验标志。
+- 当前入口不会按各项测试的失败结果设置进程退出码，自动化验收不能只看退出码 0。
 
-输出示例：
+输出结构示意（只包含所选测试）：
 
 ```json
 {
-    "Restart_Test": { ... },
-    "IID_Test": { ... },
-    "Non_IID_Test": { ... }
+    "Restart_Test": {"status": "pass", "h_min": 0.9, "H_I": 0.9},
+    "IID_Test": {"status": "pass", "data": {}},
+    "Non_IID_Test": {"status": "pass", "data": {}}
 }
 ```
 
@@ -203,5 +210,6 @@ python job_bench.py ../8ckup/NIST_SP800-90B_EntropyAssessment/bin/truerand_4bit.
 ## 数据文件要求
 
 - 数据文件必须为**二进制格式**。
-- 若熵源输出 1~8 位样本，每个样本单独占一个字节；若为 9~16 位，使用两个连续字节表示（高字节在前），依此类推。
-- 建议采集不少于 **1,000,000** 个连续样本；若无法满足，请记录原因。
+- 每个 1～8 位样本单独占一个字节；当前读取器不支持 9～16 位样本的多字节解码。
+- 按 bit 打包的文件先用上级 `est_core_nist_cpp_recode/cli/ea_unpack_bits.py` 展开。
+- IID / Non-IID 建议不少于 **1,000,000** 个连续样本；Restart 必须恰好 **1,000,000** 个，按 1000 × 1000 排列。

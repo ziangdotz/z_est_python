@@ -1,159 +1,160 @@
 # z_est_python — NIST SP 800-90B 熵评估（Python）
 
-按 NIST SP 800-90B（January 2018）评估熵源的 min-entropy。仓库里有**两条独立实现**（纯 Python 原版、
-按 C++ 参考实现逐函数重写版）与**三种调用外壳**（命令行测试脚本、pywebview 桌面应用、FastAPI Web 服务）。
+基于 NIST SP 800-90B（January 2018）评估熵源的最小熵（min-entropy）。项目包含两套核心实现，
+以及命令行、Windows 桌面应用和 FastAPI Web 服务三种调用方式。
 
----
+## 1. 项目架构
 
-## 1. 环境
+| 层次 | 位置 | 职责 |
+|---|---|---|
+| 核心实现 A | `est_core/` | 原版 Python 算法；DNN 的 FC / RNN 预测器使用独立入口 `main_dnn.py` |
+| 核心实现 B | `est_core_nist_cpp_recode/ea/` | 按 NIST C++ v1.1.8 参考实现重写，包含 IID、Non-IID、Restart 和 Conditioning |
+| 命令行 | `est_test/`、`est_test_nist_cpp_recode/`、实现 B 的 `cli/` | 评估入口输出日志及 JSON 汇总；数据预处理入口生成二进制文件 |
+| 桌面应用 | `est_test_x_vue3_pywebview/` | Vue 3 → pywebview `Api` → 两套 runner；评估任务在子进程内运行 |
+| Web 服务 | `est_web_fastapi/` | 两套路由分别调用两套核心；请求中的 Base64 数据转为临时二进制文件 |
+| 开发工具 | `est_test_nist_cpp_recode/` 下四个校验/基准脚本 | 回归验证与性能测量，不是应用的运行依赖 |
 
-- 本工程固定使用 conda 环境 `z_est_env_python`，目录 `C:\Tools\miniconda3\envs\z_est_env_python`
-  （当前实测 Python 3.12.14）。**PATH 上的 `python` 不是这个环境**，而是 msys64 的
-  `C:\Tools\msys64\mingw64\bin\python.exe`，没装 numpy / nuitka，直接 `python xxx.py` 会
-  `ModuleNotFoundError`、`make build_all` 会 `No module named nuitka`。
-- `make` 的目标已经默认指向上面那个 conda 解释器（探测到该路径就用，探不到才回退 PATH 上的
-  `python`），无需每次手写 `PYTHON=`；要用别的解释器时显式覆盖（见 §5）。
-- 安装依赖：`pip install -r requirements.txt`
-  - `requirements.txt` 是 **UTF-8 + LF**（历史上被存成 UTF-16LE+BOM，已转换；`.gitattributes` 负责守住这条线）
-  - 全部版本锁定；`scipy` / `numba` 是可选项，缺失时代码自动回退（回退不改变任何计算结果）
-  - 当前环境是**全量装配**：64 条锁定项 64 条命中（2026-09-28 实测，含 `tensorflow` / `keras`、
-    `fastapi` / `uvicorn` / `pydantic`、`pytest` / `coverage` 三个功能栈），`make build_all` /
-    `jit_crosscheck` / `lrs_bench` 均已实机跑通。只有 `ruff` / `mypy` / `psutil` 不在锁定项里、
-    也没装（静态检查那条待办要先补装，见 `docs/优化候选清单与资源预算.md` §4-D）
+实现 B 的 Non-IID 流程包含标准 §6.3 的十个估计器；`_io.py` 负责读取与符号映射，
+`_lrs.py` 负责后缀数组与 t-Tuple / LRS，`_parallel.py` 负责进程调度，`_jit.py` 提供可选 numba 加速。
+桌面和 Web 均可调用两套实现，但不能用一套实现的回归结果代替另一套的验收。
 
-| 依赖 | 必需 | 缺失时的行为 |
-|------|:----:|--------------|
-| `numpy` | ✅ | — |
-| `scipy` | ⬜ | χ² p-value 走内置 Cephes `igamc` 实现 |
-| `mpmath` | ✅ | 条件化评估需要任意精度 |
-| `numba` + `llvmlite` | ⬜ | 四个逐样本预测器回退到纯 Python 双胞胎，结果逐位相同、约慢 4.7× |
-
----
-
-## 2. 目录结构
-
-```
+```text
 z_est_python/
-├── est_core/                      # 实现 A：纯 Python 原版（含 DNN 预测器 FC / RNN）
-├── est_core_nist_cpp_recode/      # 实现 B：按 NIST C++ 参考实现逐函数重写
-│   ├── ea/                        #   算法库（_config / _io / _lrs / _jit / _parallel / 各估计器）
-│   └── cli/                       #   ea_iid · ea_non_iid · ea_restart · ea_conditioning
-│                                  #   ea_transpose · ea_unpack_bits（数据预处理）
-├── est_test/                      # 实现 A 的测试入口
-├── est_test_nist_cpp_recode/      # 实现 B 的测试入口 + 四个校验/基准工具（见 §4）
-├── est_test_x_vue3_pywebview/     # Vue3 + pywebview 桌面应用（Nuitka 打包 onefile，详见其 README）
-├── est_web_fastapi/               # FastAPI Web 服务（两条实现各挂一套路由）
-├── 8ckup/                         # NIST C++ 上游源码副本 + 11 个测试样本 + selftest/refdata 基准（不入库）
-├── data/                          # 本地输入数据与评估产物（不入库）
-├── docs/                          # 本地设计笔记与实现分析（不入库）
-├── release/                       # 打包输出（不入库）
-├── requirements.txt               # 全量版本锁定（UTF-8 + LF，见 §1）
-└── Makefile                       # 常用目标，见 §5
+├── est_core/                     # 原版核心算法
+├── est_core_nist_cpp_recode/
+│   ├── ea/                       # 重写版算法库
+│   └── cli/                      # 评估与数据预处理入口
+├── est_test/                     # 原版统一命令行入口
+├── est_test_nist_cpp_recode/      # 重写版命令行入口及开发工具
+├── est_test_x_vue3_pywebview/     # Windows 桌面应用及前端构建
+├── est_web_fastapi/              # Web 服务
+├── 8ckup/                        # 本地 C++ 源码、样本与 refdata（不入库）
+├── data/                         # 本地输入与结果（仅 .gitkeep 入库）
+├── docs/                         # 设计方案与优化记录（部分已跟踪，其余默认忽略）
+├── release/                      # 发布产物（不入库）
+├── requirements.txt              # 各入口和构建工具的全量锁定依赖
+└── Makefile                      # 运行、开发校验、构建与清理入口
 ```
 
----
+## 2. 环境
+
+建议使用 Python 3.12。现有 Makefile 优先探测
+`C:/Tools/miniconda3/envs/z_est_env_python/python.exe`，路径不存在时使用 PATH 上的 `python`；
+可通过 `PYTHON=` 覆盖，根 Makefile 会将选择传给桌面子 Makefile。不要假定 PATH 上的解释器已安装项目依赖。
+
+```bash
+conda activate z_est_env_python
+python -m pip install -r requirements.txt
+```
+
+| 依赖 | 用途 |
+|---|---|
+| `numpy` | 重写版的数据处理、统计计算与数组算法 |
+| `mpmath` | 重写版 Conditioning 的任意精度计算 |
+| `scipy` | 重写版 χ² p-value；缺失时使用内置 Cephes 实现 |
+| `numba` / `llvmlite` | 源码运行时可选的预测器加速；不可用时使用 Python 内核 |
+| `tensorflow` / `keras` | 原版独立 DNN 入口，不用于常规 IID / Non-IID 主流程 |
+| `fastapi` / `uvicorn` / `pydantic` | Web 服务 |
+| `pywebview` / `pystray` / `pillow` | 桌面窗口与托盘 |
+| `Nuitka` / `zstandard` | 桌面 onefile 构建与压缩 |
+
+“可选”指核心算法存在回退路径；安装完整 `requirements.txt` 仍会安装这些锁定项。
+使用 Make 目标需 GNU make；桌面开发与构建另需 Node.js / npm，桌面目标机需 WebView2 Runtime。
 
 ## 3. 快速开始
 
-四个入口脚本都接受一个二进制数据文件、输出 JSON 汇总，且都有对应的 `make` 目标
-（解释器已绑定 conda 环境，不必手写 `PYTHON=`）：
+以下命令均从**仓库根目录**执行；先将待评估文件放到示例路径，或替换为实际路径：
 
 ```bash
-make run_test                        # 实现 A（est_core）
-make run_test_nist_cpp_recode        # 实现 B —— 推荐，与 C++ 参考实现同源
-make run_test_x_vue3_pywebview       # 桌面应用开发模式（自动 npm install，连 Vite dev server）
-make run_web_fastapi                 # FastAPI Web 服务
+make run_test_nist_cpp_recode TEST_ARGS="data/source.bin --non-iid -j 1"
+make run_test TEST_ARGS="-f data/source.bin -b 8 --iid"
+make run_test_x_vue3_pywebview       # 桌面开发模式，自动启动 Vite
+make run_web_fastapi                # http://127.0.0.1:8888
 ```
 
-只想跑单个环节时用 `cli/` 下的入口（详细参数 `-h`）。这些没有 make 目标，下面的
-`python` 需先 `conda activate z_est_env_python`、或换成该解释器的绝对路径——裸
-`python` 会命中 msys64 那份（见 §1）：
+两个命令行 Make 目标默认 `TEST_ARGS=--help`，不传参数时显示帮助。
+`TEST_ARGS` 中的相对文件路径按仓库根目录解析；桌面应用通过界面选择文件，Web 服务通过页面或 API 接收数据。
+完整参数见 [`est_test/README.md`](est_test/README.md) 与
+[`est_test_nist_cpp_recode/README.md`](est_test_nist_cpp_recode/README.md)。
+
+单独运行重写版环节时，先激活上述环境，再执行：
 
 ```bash
-python ../est_core_nist_cpp_recode/cli/ea_non_iid.py <file> -vv      # 非 IID 全套，-vv 打印与 C++ 逐行同构
-python ../est_core_nist_cpp_recode/cli/ea_iid.py <file>              # IID 全套
-python ../est_core_nist_cpp_recode/cli/ea_unpack_bits.py <packed>    # 8 bit/byte → 1 bit/byte
+python est_core_nist_cpp_recode/cli/ea_non_iid.py data/source.bin -vv -j 1
+python est_core_nist_cpp_recode/cli/ea_iid.py data/source.bin
+python est_core_nist_cpp_recode/cli/ea_unpack_bits.py data/packed.bin -o data/unpacked.bin
 ```
 
----
+## 4. 开发校验与基准
 
-## 4. 与 C++ 参考实现的一致性
+以下五个 Make 目标对应四个独立脚本。**它们对开发和交付验证有用，但不参与正常运行或 `build_all` 的依赖链，
+当前桌面打包配置也不包含这些脚本。最终用户无需运行它们；不要仅因它们不在运行链上就删掉回归工具。**
 
-`8ckup/NIST_SP800-90B_EntropyAssessment` 是上游 C++ 实现的副本，其中
-`cpp/selftest/refdata/*.res` 是 11 个官方样本的参考输出，被当作验收基准。
-围绕它有四个工具，分工不重叠（都在 `est_test_nist_cpp_recode/` 下，各有 `make` 目标）：
+| Make 目标 | 脚本 | 用途 |
+|---|---|---|
+| `refdata_diff` | `refdata_diff.py` | 三个短样本的 Non-IID 参考输出回归，相对容差 `1e-9` |
+| `refdata_diff_all` | 同上，`--all --tol 1e-6` | 十一个参考样本的全量 Non-IID 回归 |
+| `jit_crosscheck` | `jit_crosscheck.py` | 比较 Python / numba 预测器的原始计数，并确认内核实际编译 |
+| `lrs_bench` | `lrs_bench.py` | 后缀数组、LCP 和熵值的计时与抽样指纹，辅助检查 `_lrs.py` 改动 |
+| `job_bench` | `job_bench.py` | 主要估计器计时，定位热点；不包含轻量 MCV，`MAX` 不是端到端耗时 |
 
-| 工具 | 管什么 | 典型命令 |
-|------|--------|---------|
-| `refdata_diff.py` | **端到端正确性**：`ea_non_iid -vv` 逐行比对 refdata，退出码 0/1 | `refdata_diff.py --all --tol 1e-6` |
-| `lrs_bench.py` | **中间量指纹**：后缀数组 / LCP 的抽样值与 `repr()`，不只看熵值 | `lrs_bench.py <file>` |
-| `jit_crosscheck.py` | **两条路等价**：每个预测器的纯 Python 循环 vs numba kernel 的原始计数 | `jit_crosscheck.py` |
-| `job_bench.py` | **速度分布**：逐 job 计时，给出 SUM 与并行后的最长 job（墙钟下限） | `job_bench.py <file>` |
-
-当前基线：11/11 样本通过 1e-6 档；严格 1e-9 档下 3 个短样本 `exact = 53 / 89 / 87`；
-numba 开与关给出的 `H_assessed` 逐字相同。
-
----
-
-## 5. Make 目标
-
-```bash
-make help                                       # 列出全部目标
-
-# 运行四个入口
-make run_test                                   # 实现 A（est_core）
-make run_test_nist_cpp_recode                   # 实现 B（推荐，与 C++ 参考实现同源）
-make run_test_x_vue3_pywebview                  # 桌面应用开发模式
-make run_web_fastapi                            # FastAPI Web 服务
-
-# 与 C++ 参考实现的校验 / 基准（见 §4）
-make refdata_diff                               # 3 个短样本快速回归
-make refdata_diff_all                           # 11 个样本全量回归（数十分钟）
-make jit_crosscheck                             # 纯 Python / numba 两条路对拍
-make lrs_bench                                  # 后缀数组 / LCP 计时与指纹
-make job_bench                                  # 逐 job 耗时分布
-
-# 打包与清理
-make build_all                                  # 桌面应用 → release/（见 §6）
-make build_test_x_vue3_pywebview_windows_amd64  # build_all 目前唯一的成员目标
-make clean                                      # 删 release/ 里的产物
-```
-
-目标里用的解释器默认是 conda 环境 `z_est_env_python`（自动继承到 `est_test_x_vue3_pywebview/`
-子 Makefile），所以直接 `make xxx` 即可；样本路径用 `LRS_BENCH_SAMPLE` / `JOB_BENCH_SAMPLE`
-覆盖，换解释器用 `PYTHON=` 覆盖：
+`refdata_diff` / `refdata_diff_all` 需要另行准备
+`8ckup/NIST_SP800-90B_EntropyAssessment/bin/*.bin` 和
+`8ckup/NIST_SP800-90B_EntropyAssessment/cpp/selftest/refdata/*.res`；
+`jit_crosscheck` 需要这些样本及可用的 numba。`8ckup/` 不入库，普通克隆不会自动带上这些测试资源。
+两个 benchmark 默认用 `truerand_4bit.bin`，也可传自己的数据文件：
 
 ```bash
 make refdata_diff
-make refdata_diff PYTHON=C:/Tools/miniconda3/envs/z_est_env_python/python.exe   # 等价于默认值
+make refdata_diff_all
+make lrs_bench LRS_BENCH_SAMPLE=data/source.bin
+make job_bench JOB_BENCH_SAMPLE=data/source.bin
+make refdata_diff PYTHON=C:/path/to/python.exe
+make help
 ```
 
----
+全量比对保留 `--tol 1e-6`：C++ `long double` 与 Python `float` 的计算差异可能经预测器的 `-log2`
+放大，在默认 `1e-9` 档下超容差。**该参数只改变参考输出的验收阈值，不改变算法、计算精度或最终熵值。**
+具体比对范围与使用方法见重写版测试 README；它只检查 Non-IID 的 `Estimate:` 明细，不覆盖全部 JSON、IID、Restart 或 GUI。
 
-## 6. 打包桌面应用
+## 5. 打包与清理
 
-`make build_all` 用 **Nuitka 4.0.8**（不是 PyInstaller）把桌面应用打成免安装的 onefile exe，
-产物落在 `release/est_test_x_vue3_pywebview_windows_amd64.exe`（约 46.8 MiB）。完整构建链、
-打包取舍，以及两个 Windows 陷阱（缺 Anaconda `Library\bin` 原生 DLL 导致启动即 native abort、
-Defender 的 ML 启发式把产物当病毒删——`Wacapew.A!ml` 打构建出的 exe、`Contebrew.A!ml`
-打运行时解压到 `%TEMP%\onefile_*` 的 `main.dll`，后者需单独加排除），详见
+```bash
+make build_all                                  # 当前仅构建 Windows amd64 桌面应用
+make build_test_x_vue3_pywebview_windows_amd64    # 与 build_all 等价
+make prepare                                    # 仅创建 release/；构建时自动执行
+make clean                                      # 仅删除根目录的已发布 exe
+```
+
+构建使用 Nuitka onefile，输出为 `release/est_test_x_vue3_pywebview_windows_amd64.exe`。
+根 `clean` 不清理桌面的中间目录；需要时执行 `make -C est_test_x_vue3_pywebview clean`。
+构建不会自动运行参考回归或产物自检；完整构建配置与已知限制见
 [`est_test_x_vue3_pywebview/README.md`](est_test_x_vue3_pywebview/README.md)。
 
-构建完务必验证一次——GUI 构建没有控制台，结果必须落文件：
+GUI 产物没有控制台；在仓库根目录用 PowerShell 等待自检结束，并读取日志及退出码：
 
 ```powershell
-release\est_test_x_vue3_pywebview_windows_amd64.exe --selftest --selftest-log selftest.log
-echo $LASTEXITCODE      # 0 = 通过
+$process = Start-Process -FilePath ".\release\est_test_x_vue3_pywebview_windows_amd64.exe" `
+    -ArgumentList '--selftest', '--selftest-log', 'selftest.log' -Wait -PassThru
+$process.ExitCode    # 0 = 自检通过
+Get-Content selftest.log
 ```
 
-`--selftest` 走前端同一个 `Api` 真跑一次 IID + Non-IID，并校验 Vue 产物 `dist/index.html`
-确实在载荷里，用退出码回答“产物到底有没有把分析库和前端打进去”，比手点 UI 可靠。其它参数
-（`--selftest-all` / `--selftest-timeout`）见上述子 README。
+`--selftest` 通过与前端相同的 `Api` 运行重写版 IID / Non-IID，并检查打包的 `dist/index.html`。
+它不验证 GUI 渲染或全部统计边界；`--selftest-all` 额外覆盖原版引擎。
 
----
+## 6. 数据文件格式
 
-## 7. 数据文件格式
+- 必须为二进制文件，**每个 1～8 位样本单独占一个字节**，有效值放在低位；1 位样本也不能直接按 bit 打包。
+- 当前两套核心读取器都按字节处理，**不支持把两个连续字节解析成一个 9～16 位样本**。
+- 按 bit 打包的数据先用 `est_core_nist_cpp_recode/cli/ea_unpack_bits.py` 展开，输出为 MSB-first 的 `0x00` / `0x01` 字节。
+- IID / Non-IID 建议不少于 **1,000,000** 个连续样本；Restart 要求恰好 **1,000,000** 个样本，按 1000 次重启、每次 1000 个样本排列。
 
-- 必须为**二进制**格式。熵源输出 1~8 位样本时每个样本占一个字节；9~16 位用两个连续字节（高字节在前），依此类推。
-- 建议采集不少于 **1,000,000** 个连续样本；无法满足时请记录原因。
-- 若采集端是按 bit 打包的文件，先用 `cli/ea_unpack_bits.py` 展开成每样本一字节。
+## 7. 开发注意事项
+
+- 当前桌面构建排除 numba / llvmlite，所以 JIT 优化的收益不能直接当作发布 exe 的收益。
+- `main.py` 已有 Nuitka 冻结态识别，但 `ea/_parallel.py` 的 `frozen()` 仍只检查 `sys` 信号；其并发/JIT 守卫并未完成同样的修复。
+- FastAPI 路由仍通过进程级 `redirect_stdout` 捕获日志，并发请求存在日志互相干扰的风险；不应将开发服务器视作已验证的并发部署方案。
+
+设计与后续优化记录见 [`docs/NIST SP800-90B EntropyAssessment Python 重写方案.md`](docs/NIST%20SP800-90B%20EntropyAssessment%20Python%20重写方案.md)
+和 [`docs/优化候选清单与资源预算.md`](docs/优化候选清单与资源预算.md)。方案、历史测量与待办不等于当前实现或本次验收结果，修改算法时仍需重新验证。
